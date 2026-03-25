@@ -8,8 +8,8 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
 
     body {
-      width: 380px;
-      min-height: 480px;
+      width: 400px;
+      min-height: 520px;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
       background: #FAFAFA;
       color: #0D0D0D;
@@ -54,224 +54,6 @@
     .view { display: none; }
     .view.active { display: block; }
 
-    /* ── Scan View ── */
-    .scan-section {
-      padding: 20px;
-    }
-
-    .scan-btn {
-      width: 100%;
-      padding: 14px;
-      background: #0D0D0D;
-      color: white;
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
-      letter-spacing: -0.2px;
-    }
-
-    .scan-btn:hover { background: #222; }
-    .scan-btn:disabled {
-      background: #CCC;
-      cursor: not-allowed;
-    }
-
-    .scan-btn.scanning {
-      background: #333;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .scan-btn.scanning::after {
-      content: '';
-      position: absolute;
-      top: 0; left: -100%;
-      width: 100%; height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
-      animation: shimmer 1.5s infinite;
-    }
-
-    @keyframes shimmer {
-      100% { left: 100%; }
-    }
-
-    .scan-status {
-      margin-top: 12px;
-      padding: 10px 14px;
-      background: #F0F0F0;
-      border-radius: 6px;
-      font-size: 12px;
-      color: #555;
-      display: none;
-    }
-
-    .scan-status.visible { display: block; }
-    .scan-status.error { background: #FEE; color: #C00; }
-    .scan-status.success { background: #EFE; color: #070; }
-
-    /* ── Results View ── */
-    .results-section {
-      padding: 16px 20px;
-    }
-
-    .business-card {
-      background: white;
-      border: 1px solid #E5E5E5;
-      border-radius: 10px;
-      padding: 16px;
-      margin-bottom: 12px;
-    }
-
-    .business-card .name {
-      font-size: 15px;
-      font-weight: 700;
-      margin-bottom: 2px;
-    }
-
-    .business-card .category {
-      font-size: 11px;
-      color: #888;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 8px;
-    }
-
-    .business-card .meta {
-      font-size: 12px;
-      color: #555;
-    }
-
-    .business-card .meta span {
-      display: block;
-      margin-bottom: 2px;
-    }
-
-    /* ── Gap Analysis ── */
-    .gaps-section {
-      margin-top: 12px;
-    }
-
-    .gaps-section h3 {
-      font-size: 12px;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #888;
-      margin-bottom: 8px;
-    }
-
-    .gap-item {
-      display: flex;
-      align-items: flex-start;
-      gap: 8px;
-      padding: 8px 12px;
-      background: white;
-      border: 1px solid #E5E5E5;
-      border-radius: 8px;
-      margin-bottom: 6px;
-    }
-
-    .gap-item .impact {
-      flex-shrink: 0;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      margin-top: 5px;
-    }
-
-    .gap-item .impact.high { background: #E53E3E; }
-    .gap-item .impact.medium { background: #DD6B20; }
-    .gap-item .impact.low { background: #38A169; }
-
-    .gap-item .gap-text {
-      font-size: 12px;
-      font-weight: 500;
-    }
-
-    .gap-item .gap-explain {
-      font-size: 11px;
-      color: #777;
-      margin-top: 2px;
-    }
-
-    /* ── Action buttons ── */
-    .actions {
-      padding: 0 20px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .action-btn {
-      width: 100%;
-      padding: 12px;
-      border: none;
-      border-radius: 8px;
-      font-size: 13px;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
-    .action-btn.primary {
-      background: #0D0D0D;
-      color: white;
-    }
-    .action-btn.primary:hover { background: #222; }
-
-    .action-btn.secondary {
-      background: white;
-      color: #0D0D0D;
-      border: 1px solid #E5E5E5;
-    }
-    .action-btn.secondary:hover { background: #F5F5F5; }
-
-    .action-btn:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    /* ── Leads List ── */
-    .leads-section {
-      padding: 16px 20px;
-    }
-
-    .lead-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 10px 12px;
-      background: white;
-      border: 1px solid #E5E5E5;
-      border-radius: 8px;
-      margin-bottom: 6px;
-      cursor: pointer;
-      transition: all 0.15s;
-    }
-
-    .lead-item:hover { border-color: #0D0D0D; }
-
-    .lead-item .lead-name {
-      font-size: 13px;
-      font-weight: 600;
-    }
-
-    .lead-item .lead-status {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      padding: 2px 8px;
-      border-radius: 10px;
-      font-weight: 600;
-    }
-
-    .lead-item .lead-status.analyzed { background: #EBF8FF; color: #2B6CB0; }
-    .lead-item .lead-status.built { background: #F0FFF4; color: #276749; }
-    .lead-item .lead-status.emailed { background: #FFFFF0; color: #975A16; }
-    .lead-item .lead-status.converted { background: #F0FFF4; color: #22543D; }
-
     /* ── Tabs ── */
     .tabs {
       display: flex;
@@ -299,6 +81,306 @@
 
     .tab-btn:hover { color: #0D0D0D; }
 
+    /* ── Prospect View ── */
+    .prospect-section {
+      padding: 20px;
+    }
+
+    .input-group {
+      margin-bottom: 14px;
+    }
+
+    .input-group label {
+      display: block;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      margin-bottom: 6px;
+    }
+
+    .input-group input,
+    .input-group select {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid #E5E5E5;
+      border-radius: 8px;
+      font-size: 13px;
+      font-family: inherit;
+      background: white;
+      transition: border-color 0.15s;
+    }
+
+    .input-group input:focus,
+    .input-group select:focus {
+      outline: none;
+      border-color: #0D0D0D;
+    }
+
+    .hunt-btn {
+      width: 100%;
+      padding: 14px;
+      background: #0D0D0D;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      letter-spacing: -0.2px;
+      margin-top: 4px;
+    }
+
+    .hunt-btn:hover { background: #222; }
+    .hunt-btn:disabled { background: #CCC; cursor: not-allowed; }
+
+    .hunt-btn.hunting {
+      background: #333;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hunt-btn.hunting::after {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+      animation: shimmer 1.5s infinite;
+    }
+
+    @keyframes shimmer { 100% { left: 100%; } }
+
+    .or-divider {
+      text-align: center;
+      color: #CCC;
+      font-size: 11px;
+      font-weight: 600;
+      margin: 14px 0;
+      position: relative;
+    }
+
+    .or-divider::before,
+    .or-divider::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      width: 40%;
+      height: 1px;
+      background: #E5E5E5;
+    }
+
+    .or-divider::before { left: 0; }
+    .or-divider::after { right: 0; }
+
+    .auto-btn {
+      width: 100%;
+      padding: 14px;
+      background: white;
+      color: #0D0D0D;
+      border: 2px solid #0D0D0D;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .auto-btn:hover { background: #0D0D0D; color: white; }
+    .auto-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Progress / Live Feed ── */
+    .progress-section {
+      padding: 0 20px 20px;
+      display: none;
+    }
+
+    .progress-section.visible { display: block; }
+
+    .progress-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .progress-header h3 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+    }
+
+    .progress-counter {
+      font-size: 12px;
+      font-weight: 700;
+      color: #0D0D0D;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: #E5E5E5;
+      border-radius: 2px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+
+    .progress-bar .fill {
+      height: 100%;
+      background: #0D0D0D;
+      border-radius: 2px;
+      transition: width 0.3s;
+      width: 0%;
+    }
+
+    .live-feed {
+      max-height: 200px;
+      overflow-y: auto;
+    }
+
+    .feed-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 0;
+      border-bottom: 1px solid #F0F0F0;
+      font-size: 12px;
+      animation: fadeIn 0.3s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .feed-item .feed-icon {
+      flex-shrink: 0;
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+    }
+
+    .feed-icon.searching { background: #EBF8FF; }
+    .feed-icon.found { background: #F0FFF4; }
+    .feed-icon.analyzing { background: #FFFFF0; }
+    .feed-icon.done { background: #F0FFF4; }
+    .feed-icon.skip { background: #F5F5F5; }
+
+    .feed-item .feed-text {
+      color: #555;
+      line-height: 1.4;
+    }
+
+    .feed-item .feed-text strong {
+      color: #0D0D0D;
+    }
+
+    /* ── Trending tags ── */
+    .trending-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 10px;
+      margin-bottom: 14px;
+    }
+
+    .trend-tag {
+      padding: 4px 10px;
+      background: white;
+      border: 1px solid #E5E5E5;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 500;
+      color: #555;
+      cursor: default;
+    }
+
+    .trend-tag.hot {
+      border-color: #E53E3E;
+      color: #E53E3E;
+      background: #FFF5F5;
+    }
+
+    /* ── Leads View ── */
+    .leads-section {
+      padding: 16px 20px;
+    }
+
+    .lead-card {
+      background: white;
+      border: 1px solid #E5E5E5;
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .lead-card:hover { border-color: #0D0D0D; }
+
+    .lead-card .lead-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      margin-bottom: 6px;
+    }
+
+    .lead-card .lead-name {
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .lead-card .lead-category {
+      font-size: 11px;
+      color: #888;
+    }
+
+    .lead-card .lead-status {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    .lead-status.analyzed { background: #EBF8FF; color: #2B6CB0; }
+    .lead-status.site_built { background: #F0FFF4; color: #276749; }
+    .lead-status.emailed { background: #FFFFF0; color: #975A16; }
+    .lead-status.converted { background: #F0FFF4; color: #22543D; }
+    .lead-status.scraped { background: #F5F5F5; color: #888; }
+
+    .lead-card .lead-gaps {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+
+    .lead-card .gap-tag {
+      font-size: 10px;
+      padding: 2px 6px;
+      background: #FFF5F5;
+      color: #C53030;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+
+    .lead-card .lead-score {
+      font-size: 11px;
+      color: #888;
+      margin-top: 6px;
+    }
+
     /* ── Empty state ── */
     .empty-state {
       text-align: center;
@@ -306,23 +388,135 @@
       color: #888;
     }
 
-    .empty-state .icon { font-size: 32px; margin-bottom: 8px; }
-    .empty-state p { font-size: 12px; }
+    .empty-state p { font-size: 12px; margin-top: 4px; }
 
-    /* ── Lovable Prompt Preview ── */
+    /* ── Lead detail overlay ── */
+    .lead-detail {
+      display: none;
+      padding: 20px;
+    }
+
+    .lead-detail.active { display: block; }
+
+    .back-btn {
+      background: none;
+      border: none;
+      font-size: 12px;
+      font-weight: 600;
+      color: #888;
+      cursor: pointer;
+      margin-bottom: 12px;
+      padding: 0;
+    }
+
+    .back-btn:hover { color: #0D0D0D; }
+
+    .detail-name {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .detail-category {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 12px;
+    }
+
+    .detail-section {
+      margin-bottom: 16px;
+    }
+
+    .detail-section h4 {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    .detail-section p {
+      font-size: 12px;
+      color: #555;
+      line-height: 1.6;
+    }
+
+    .detail-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 16px;
+    }
+
+    .detail-actions .action-btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .action-btn.primary { background: #0D0D0D; color: white; }
+    .action-btn.primary:hover { background: #222; }
+    .action-btn.secondary { background: white; border: 1px solid #E5E5E5; color: #0D0D0D; }
+    .action-btn.secondary:hover { background: #F5F5F5; }
+
     .prompt-preview {
       background: #F7F7F7;
       border: 1px solid #E5E5E5;
       border-radius: 8px;
       padding: 12px;
-      margin-top: 12px;
-      max-height: 150px;
+      max-height: 120px;
       overflow-y: auto;
       font-size: 11px;
       color: #555;
       line-height: 1.6;
       white-space: pre-wrap;
     }
+
+    .gap-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #FAFAFA;
+      border-radius: 8px;
+      margin-bottom: 6px;
+    }
+
+    .gap-item .impact-dot {
+      flex-shrink: 0;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-top: 5px;
+    }
+
+    .impact-dot.high { background: #E53E3E; }
+    .impact-dot.medium { background: #DD6B20; }
+    .impact-dot.low { background: #38A169; }
+
+    .gap-item .gap-text { font-size: 12px; font-weight: 500; }
+    .gap-item .gap-explain { font-size: 11px; color: #777; margin-top: 2px; }
+
+    /* ── Stop button ── */
+    .stop-btn {
+      width: 100%;
+      padding: 10px;
+      background: white;
+      color: #C00;
+      border: 1px solid #C00;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 12px;
+      display: none;
+    }
+
+    .stop-btn.visible { display: block; }
 
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 4px; }
@@ -342,45 +536,49 @@
 
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab-btn active" data-tab="scan">Scan</button>
+    <button class="tab-btn active" data-tab="prospect">Hunt</button>
     <button class="tab-btn" data-tab="leads">Leads <span id="leadCount"></span></button>
   </div>
 
-  <!-- Scan View -->
-  <div class="view active" id="scanView">
-    <div class="scan-section">
-      <button class="scan-btn" id="scanBtn">Scan This Page</button>
-      <div class="scan-status" id="scanStatus"></div>
+  <!-- Prospect View -->
+  <div class="view active" id="prospectView">
+    <div class="prospect-section">
+      <div class="input-group">
+        <label>Your City / Area</label>
+        <input type="text" id="locationInput" placeholder="Scottsdale, AZ">
+      </div>
+
+      <button class="auto-btn" id="autoHuntBtn">
+        Find Me Opportunities
+      </button>
+      <p style="text-align:center; font-size:11px; color:#888; margin-top:6px;">
+        AI finds trending industries in your area, then hunts for businesses with weak websites
+      </p>
+
+      <div class="or-divider">OR</div>
+
+      <div class="input-group">
+        <label>Specific Industry (optional)</label>
+        <input type="text" id="industryInput" placeholder="e.g. medspas, auto detailing, restaurants">
+      </div>
+
+      <button class="hunt-btn" id="huntBtn">
+        Hunt in This Industry
+      </button>
     </div>
 
-    <!-- Results (shown after scan) -->
-    <div id="resultsContainer" style="display: none;">
-      <div class="results-section">
-        <div class="business-card">
-          <div class="name" id="bizName">—</div>
-          <div class="category" id="bizCategory">—</div>
-          <div class="meta">
-            <span id="bizPhone"></span>
-            <span id="bizAddress"></span>
-            <span id="bizWebsite"></span>
-            <span id="bizRating"></span>
-          </div>
-        </div>
-
-        <div class="gaps-section" id="gapsSection" style="display: none;">
-          <h3>Revenue Gaps Found</h3>
-          <div id="gapsList"></div>
-        </div>
-
-        <div id="promptPreview" class="prompt-preview" style="display: none;"></div>
+    <!-- Live progress feed -->
+    <div class="progress-section" id="progressSection">
+      <div class="progress-header">
+        <h3>Hunting...</h3>
+        <span class="progress-counter" id="progressCounter">0 leads found</span>
       </div>
+      <div class="progress-bar"><div class="fill" id="progressFill"></div></div>
 
-      <div class="actions">
-        <button class="action-btn primary" id="analyzeBtn">Analyze & Find Gaps</button>
-        <button class="action-btn primary" id="buildBtn" style="display: none;">Build Site on Lovable</button>
-        <button class="action-btn secondary" id="saveLeadBtn">Save as Lead</button>
-        <button class="action-btn secondary" id="fullPipelineBtn">Full Pipeline (Scan → Build → Email)</button>
-      </div>
+      <div id="trendingTags" class="trending-tags" style="display:none;"></div>
+
+      <div class="live-feed" id="liveFeed"></div>
+      <button class="stop-btn" id="stopBtn">Stop Hunt</button>
     </div>
   </div>
 
@@ -388,10 +586,13 @@
   <div class="view" id="leadsView">
     <div class="leads-section" id="leadsList">
       <div class="empty-state">
-        <div class="icon">&#128269;</div>
-        <p>No leads yet. Scan a business page to get started.</p>
+        <p>No leads yet.</p>
+        <p>Go to Hunt tab and enter your city.</p>
       </div>
     </div>
+
+    <!-- Lead detail (replaces list when clicked) -->
+    <div class="lead-detail" id="leadDetail"></div>
   </div>
 
   <script src="popup.js"></script>

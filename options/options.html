@@ -105,15 +105,23 @@
   <p class="subtitle">by Create & Source</p>
 
   <div class="section">
-    <h2>AI Analysis</h2>
-    <p class="desc">Claude API key for analyzing businesses and generating Lovable prompts.</p>
+    <h2>AI Analysis (Required)</h2>
+    <p class="desc">Claude API key — the brain that researches trends, finds weak businesses, and writes Lovable prompts.</p>
     <label for="claudeKey">Claude API Key</label>
     <input type="password" id="claudeKey" placeholder="sk-ant-...">
   </div>
 
   <div class="section">
-    <h2>CRM Connection</h2>
-    <p class="desc">Connect to your SiteScout CRM dashboard to sync leads.</p>
+    <h2>Business Search (Recommended)</h2>
+    <p class="desc">SerpAPI key for searching Google Maps to find real businesses. Free tier: 100 searches/month. Without this, Claude guesses at businesses (less accurate).</p>
+    <label for="serpKey">SerpAPI Key</label>
+    <input type="password" id="serpKey" placeholder="Get one free at serpapi.com">
+    <p class="desc" style="margin-top:0; font-size:11px;">Sign up at <a href="https://serpapi.com" target="_blank" style="color:#0D0D0D;">serpapi.com</a> — free tier is 100 searches/month</p>
+  </div>
+
+  <div class="section">
+    <h2>CRM Connection (Optional)</h2>
+    <p class="desc">Connect to your SiteScout CRM dashboard to sync leads automatically.</p>
     <label for="crmUrl">CRM API URL</label>
     <input type="text" id="crmUrl" placeholder="https://sitescout-crm.vercel.app">
     <label for="apiKey">API Key</label>

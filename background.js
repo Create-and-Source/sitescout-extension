@@ -1,63 +1,55 @@
 // ============================================================
-// SiteScout — Background Service Worker
+// SiteScout — Background Service Worker (Autonomous Hunting)
 // ============================================================
-// Orchestrates scraping, AI analysis, and CRM communication.
+// The brain. Finds trending industries, hunts businesses with
+// weak websites, scrapes them, analyzes gaps, saves as leads.
+// You just enter your city — the tool does everything.
 
 const CRM_API_URL = "https://sitescout-crm.vercel.app";
 
-// ── Storage helpers ──────────────────────────────────────────
+// ── Config ───────────────────────────────────────────────────
 
 async function getConfig() {
   const result = await chrome.storage.sync.get([
     "crmApiUrl",
     "apiKey",
     "claudeApiKey",
+    "serpApiKey",
   ]);
   return {
     crmApiUrl: result.crmApiUrl || CRM_API_URL,
     apiKey: result.apiKey || "",
     claudeApiKey: result.claudeApiKey || "",
+    serpApiKey: result.serpApiKey || "",
   };
 }
 
-// ── Detect page type ─────────────────────────────────────────
-
-function detectPageType(url) {
-  if (!url) return "unknown";
-  if (url.includes("google.com/maps") || url.includes("maps.google.com"))
-    return "google_maps";
-  if (url.includes("yelp.com/biz")) return "yelp";
-  return "generic";
-}
-
-// ── Message handlers ─────────────────────────────────────────
+// ── Message router ───────────────────────────────────────────
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  handleMessage(message, sender)
+  handleMessage(message)
     .then(sendResponse)
     .catch((err) => sendResponse({ error: err.message }));
   return true;
 });
 
-async function handleMessage(message, sender) {
+async function handleMessage(message) {
   switch (message.type) {
-    case "SCRAPE_CURRENT_TAB":
-      return scrapeCurrentTab();
+    case "FIND_TRENDING_INDUSTRIES":
+      return findTrendingIndustries(message.location);
 
-    case "SCRAPE_WEBSITE":
-      return scrapeWebsite(message.url);
+    case "HUNT_INDUSTRY":
+      return huntIndustry(
+        message.location,
+        message.industry,
+        message.reason
+      );
 
-    case "ANALYZE_BUSINESS":
-      return analyzeBusiness(message.data);
+    case "GET_LEADS":
+      return getLeadsFromStorage();
 
     case "SAVE_LEAD":
       return saveLead(message.data);
-
-    case "GET_LEADS":
-      return getLeads();
-
-    case "FULL_PIPELINE":
-      return fullPipeline(message.data);
 
     case "GET_CONFIG":
       return getConfig();
@@ -67,235 +59,372 @@ async function handleMessage(message, sender) {
   }
 }
 
-// ── Scrape the current active tab ────────────────────────────
+// ═════════════════════════════════════════════════════════════
+// STEP 1: Find what's hot in this location
+// ═════════════════════════════════════════════════════════════
 
-async function scrapeCurrentTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab) throw new Error("No active tab");
-
-  const pageType = detectPageType(tab.url);
-
-  // For Google Maps and Yelp, content scripts are already injected
-  if (pageType === "google_maps" || pageType === "yelp") {
-    return new Promise((resolve, reject) => {
-      chrome.tabs.sendMessage(tab.id, { type: "SCRAPE_PAGE" }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(response);
-        }
-      });
-    });
+async function findTrendingIndustries(location) {
+  const config = await getConfig();
+  if (!config.claudeApiKey) {
+    throw new Error("Add your Claude API key in Settings first");
   }
 
-  // For generic sites, inject the script dynamically
-  const results = await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    files: ["content/generic.js"],
-  });
+  const response = await callClaude(
+    config.claudeApiKey,
+    `You are a market research AI for a web design agency called Create & Source.
 
-  // After injection, send the scrape message
-  return new Promise((resolve, reject) => {
-    setTimeout(() => {
-      chrome.tabs.sendMessage(tab.id, { type: "SCRAPE_PAGE" }, (response) => {
-        if (chrome.runtime.lastError) {
-          reject(new Error(chrome.runtime.lastError.message));
-        } else {
-          resolve(response);
-        }
-      });
-    }, 300);
-  });
+Given this location: "${location}"
+
+Identify 5-7 industries/business types that are HOT right now in or near this area — businesses that should be thriving because the market is booming, but many of them have terrible, outdated, or no websites.
+
+Think about:
+- Industries where demand is surging (medspas, mobile detailing, wellness, specialty fitness, etc.)
+- Seasonal trends for this time of year
+- Local economic trends for this specific area
+- Businesses where a great website would directly drive more revenue (online booking, e-commerce, memberships)
+- Industries where the owners are too busy running the business to fix their website
+
+Return ONLY a JSON object:
+{
+  "industries": [
+    {
+      "name": "medspas",
+      "searchQuery": "medspa near Scottsdale AZ",
+      "hot": true,
+      "reason": "Medspa industry growing 15% YoY, Scottsdale is a hotspot but many still have 2015-era sites"
+    }
+  ]
 }
 
-// ── Scrape a specific website URL ────────────────────────────
+The "searchQuery" should be what you'd type into Google Maps to find these businesses. Be specific to the location.`
+  );
+
+  return parseJSON(response);
+}
+
+// ═════════════════════════════════════════════════════════════
+// STEP 2: Find businesses in an industry, scrape + score them
+// ═════════════════════════════════════════════════════════════
+
+async function huntIndustry(location, industry, reason) {
+  const config = await getConfig();
+
+  // Search for businesses using SerpAPI (Google Maps results)
+  let businesses;
+  if (config.serpApiKey) {
+    businesses = await searchBusinessesSerpApi(
+      config.serpApiKey,
+      industry,
+      location
+    );
+  } else {
+    // Fallback: use Claude to generate likely businesses
+    // (less accurate but works without SerpAPI)
+    businesses = await findBusinessesViaClaude(
+      config.claudeApiKey,
+      industry,
+      location
+    );
+  }
+
+  if (!businesses || businesses.length === 0) {
+    return { leads: [] };
+  }
+
+  // For each business, scrape their website and analyze
+  const leads = [];
+
+  for (const biz of businesses) {
+    try {
+      // Scrape their website if they have one
+      let websiteData = null;
+      if (biz.website) {
+        try {
+          websiteData = await scrapeWebsite(biz.website);
+        } catch {
+          // Site might be down or blocked — that's a signal too
+          websiteData = { error: "Could not load website", url: biz.website };
+        }
+      }
+
+      // AI analysis — is this site weak? What are the gaps?
+      const analysis = await analyzeBusinessForLeadGen(
+        config.claudeApiKey,
+        biz,
+        websiteData,
+        industry,
+        reason
+      );
+
+      // Only save as a lead if the site is actually weak
+      if (
+        analysis &&
+        analysis.currentSiteQuality !== "good" &&
+        analysis.gaps &&
+        analysis.gaps.length > 0
+      ) {
+        const lead = {
+          id: crypto.randomUUID(),
+          ...analysis,
+          contact: {
+            phone: biz.phone || "",
+            address: biz.address || "",
+            website: biz.website || "",
+            email: websiteData?.contact?.email || "",
+          },
+          scrapedData: websiteData,
+          industry,
+          location,
+          status: "analyzed",
+          savedAt: new Date().toISOString(),
+        };
+
+        await saveLead(lead);
+        leads.push(lead);
+      }
+    } catch {
+      // Skip this business, move on
+    }
+  }
+
+  return { leads };
+}
+
+// ═════════════════════════════════════════════════════════════
+// Search for businesses via SerpAPI (Google Maps Local Results)
+// ═════════════════════════════════════════════════════════════
+
+async function searchBusinessesSerpApi(apiKey, industry, location) {
+  const query = `${industry} in ${location}`;
+  const url = `https://serpapi.com/search.json?engine=google_maps&q=${encodeURIComponent(query)}&api_key=${apiKey}`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("SerpAPI request failed");
+  const data = await res.json();
+
+  const results = data.local_results || [];
+  return results.slice(0, 10).map((r) => ({
+    name: r.title || "",
+    address: r.address || "",
+    phone: r.phone || "",
+    website: r.website || "",
+    rating: r.rating || 0,
+    reviews: r.reviews || 0,
+    type: r.type || "",
+    thumbnail: r.thumbnail || "",
+    hours: r.hours || "",
+    priceLevel: r.price || "",
+  }));
+}
+
+// ═════════════════════════════════════════════════════════════
+// Fallback: Use Claude to identify likely businesses to check
+// (When no SerpAPI key — still useful, just less precise)
+// ═════════════════════════════════════════════════════════════
+
+async function findBusinessesViaClaude(claudeApiKey, industry, location) {
+  const response = await callClaude(
+    claudeApiKey,
+    `You are helping a web design agency find businesses with weak websites.
+
+Industry: ${industry}
+Location: ${location}
+
+Search your knowledge for real businesses in this industry and location that likely have poor or no websites. Think about:
+- Small local businesses that are well-reviewed but have terrible web presence
+- Businesses you know exist in this area
+- The types of businesses in this industry that typically have bad sites
+
+Return ONLY a JSON object:
+{
+  "businesses": [
+    {
+      "name": "Example Business Name",
+      "address": "123 Main St, City, ST",
+      "phone": "(555) 123-4567",
+      "website": "https://example.com",
+      "rating": 4.5,
+      "reviews": 200,
+      "type": "medspa"
+    }
+  ]
+}
+
+Include 5-8 real businesses if you know them, or realistic examples for this area. Include their actual website URLs if you know them. If you don't know real ones, make educated guesses about the types of businesses that exist there.`
+  );
+
+  const parsed = parseJSON(response);
+  return parsed.businesses || [];
+}
+
+// ═════════════════════════════════════════════════════════════
+// Scrape a website (opens in background tab)
+// ═════════════════════════════════════════════════════════════
 
 async function scrapeWebsite(url) {
-  // Open the URL in a background tab, scrape it, close it
+  // Ensure URL has protocol
+  if (!url.startsWith("http")) url = "https://" + url;
+
   const tab = await chrome.tabs.create({ url, active: false });
 
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      chrome.tabs.onUpdated.removeListener(onComplete);
+      chrome.tabs.remove(tab.id).catch(() => {});
+      resolve({ error: "Website timed out", url });
+    }, 12000);
+
     const onComplete = async (tabId, changeInfo) => {
       if (tabId !== tab.id || changeInfo.status !== "complete") return;
       chrome.tabs.onUpdated.removeListener(onComplete);
+      clearTimeout(timeout);
 
       try {
-        // Inject generic scraper
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           files: ["content/generic.js"],
         });
 
-        // Wait for page to settle
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 800));
 
-        // Scrape
-        chrome.tabs.sendMessage(
-          tab.id,
-          { type: "SCRAPE_PAGE" },
-          (response) => {
-            chrome.tabs.remove(tab.id);
-            if (chrome.runtime.lastError) {
-              reject(new Error(chrome.runtime.lastError.message));
-            } else {
-              resolve(response);
-            }
+        chrome.tabs.sendMessage(tab.id, { type: "SCRAPE_PAGE" }, (res) => {
+          chrome.tabs.remove(tab.id).catch(() => {});
+          if (chrome.runtime.lastError || !res) {
+            resolve({ error: "Scrape failed", url });
+          } else {
+            resolve(res.data || res);
           }
-        );
-      } catch (err) {
-        chrome.tabs.remove(tab.id);
-        reject(err);
+        });
+      } catch {
+        chrome.tabs.remove(tab.id).catch(() => {});
+        resolve({ error: "Could not scrape", url });
       }
     };
 
     chrome.tabs.onUpdated.addListener(onComplete);
-
-    // Timeout after 15 seconds
-    setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(onComplete);
-      chrome.tabs.remove(tab.id).catch(() => {});
-      reject(new Error("Scraping timed out"));
-    }, 15000);
   });
 }
 
-// ── AI Analysis — Claude analyzes business and identifies gaps ──
+// ═════════════════════════════════════════════════════════════
+// AI: Analyze a business for lead generation potential
+// ═════════════════════════════════════════════════════════════
 
-async function analyzeBusiness(scrapedData) {
-  const config = await getConfig();
+async function analyzeBusinessForLeadGen(
+  claudeApiKey,
+  businessInfo,
+  websiteData,
+  industry,
+  trendReason
+) {
+  const prompt = `You are SiteScout, an AI for Create & Source, a web design agency. You analyze businesses to find ones losing money because of their weak online presence.
 
-  if (!config.claudeApiKey) {
-    throw new Error(
-      "Claude API key not configured. Go to extension options to set it up."
-    );
-  }
+CONTEXT:
+- Industry trend: "${industry}" — ${trendReason}
+- This industry is hot right now, meaning businesses WITH great websites are pulling ahead
 
-  const prompt = buildAnalysisPrompt(scrapedData);
+BUSINESS INFO (from Google Maps / directory):
+${JSON.stringify(businessInfo, null, 2)}
 
-  const response = await fetch("https://api.anthropic.com/v1/messages", {
+THEIR CURRENT WEBSITE DATA (scraped):
+${websiteData ? JSON.stringify(websiteData, null, 2) : "NO WEBSITE FOUND — this business has zero web presence"}
+
+ANALYZE THIS BUSINESS:
+1. How bad is their current website? (none, poor, average, good)
+2. What specific revenue opportunities are they missing because of their weak web presence?
+3. What would a great website do for them given their industry is trending?
+
+If their site is "good" — they don't need us. Skip them.
+If their site is "none", "poor", or "average" — they're leaving money on the table.
+
+Think about what SPECIFIC features they're missing:
+- Online booking/scheduling
+- Online ordering (food, services)
+- E-commerce / merch store
+- Membership/subscription program
+- Gift cards
+- Client reviews showcase
+- Before/after gallery
+- Email capture / marketing
+- Mobile optimization
+- Professional photography
+- SEO basics
+- Social media integration
+
+Return ONLY a JSON object:
+{
+  "businessName": "the name",
+  "businessType": "specific type",
+  "currentSiteQuality": "none | poor | average | good",
+  "gaps": [
+    {
+      "gap": "No online booking",
+      "impact": "high",
+      "explanation": "Medspas with online booking see 40% more appointments"
+    }
+  ],
+  "gapSummary": "2-3 sentences explaining what they're missing and WHY it matters given the industry trend. Written like you're telling the business owner to their face.",
+  "recommendedFeatures": ["online booking", "before/after gallery", "gift cards"],
+  "lovablePrompt": "A COMPLETE, DETAILED prompt for Lovable to build this business a stunning modern website. Include: exact business name, type, a premium color scheme that fits their brand, every page needed, every feature to include, all content sections, and specific functionality. Make it so detailed that Lovable builds a production-ready site. The design should be modern, premium, and make the business owner say 'I NEED this.' Reference their actual services, location, and branding if available.",
+  "emailSubject": "compelling email subject line",
+  "emailBody": "The full outreach email (3-4 paragraphs). Tone: we saw a gap where they could attract more clients. We built them a preview. No pressure. Just showing what's possible. Sign off as Create & Source.",
+  "estimatedRevenueImpact": "$X,000/month in potential revenue they're missing"
+}`;
+
+  const response = await callClaude(claudeApiKey, prompt);
+  return parseJSON(response);
+}
+
+// ═════════════════════════════════════════════════════════════
+// Claude API helper
+// ═════════════════════════════════════════════════════════════
+
+async function callClaude(apiKey, prompt) {
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-api-key": config.claudeApiKey,
+      "x-api-key": apiKey,
       "anthropic-version": "2023-06-01",
       "anthropic-dangerous-direct-browser-access": "true",
     },
     body: JSON.stringify({
       model: "claude-sonnet-4-20250514",
       max_tokens: 4096,
-      messages: [
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
+      messages: [{ role: "user", content: prompt }],
     }),
   });
 
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Claude API error: ${err}`);
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "Unknown error");
+    throw new Error(`Claude API error ${res.status}: ${errText}`);
   }
 
-  const result = await response.json();
-  const text = result.content[0].text;
-
-  // Parse the JSON response from Claude
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) throw new Error("Could not parse AI analysis");
-
-  return JSON.parse(jsonMatch[0]);
+  const data = await res.json();
+  return data.content[0].text;
 }
 
-function buildAnalysisPrompt(data) {
-  return `You are SiteScout, an AI that analyzes businesses and identifies opportunities for a better website.
-
-Analyze this business data and return a JSON response with:
-1. A gap analysis — what revenue opportunities is this business missing online?
-2. A complete Lovable prompt to build them a modern, professional website
-
-Business Data:
-${JSON.stringify(data, null, 2)}
-
-Return ONLY a JSON object with this exact structure:
-{
-  "businessName": "the business name",
-  "businessType": "restaurant | retail | service | fitness | salon | medical | other",
-  "currentSiteQuality": "none | poor | average | good",
-  "gaps": [
-    {
-      "gap": "short description of the missing opportunity",
-      "impact": "high | medium | low",
-      "explanation": "why this matters for revenue"
-    }
-  ],
-  "gapSummary": "2-3 sentence summary of the biggest opportunities this business is missing, written as if speaking to the business owner",
-  "recommendedFeatures": ["online ordering", "membership program", "booking system", etc],
-  "lovablePrompt": "A complete, detailed prompt for Lovable to build this business a modern website. Include: business name, type, color scheme (suggest colors based on their branding or industry), pages needed, features to include, content sections, and any specific functionality like online ordering, booking, merch store, etc. Make it specific and detailed enough that Lovable can build a complete site from this prompt alone. The site should look premium and modern.",
-  "emailSubject": "subject line for the outreach email",
-  "emailPreview": "2-3 sentence preview of what the email would say about the gaps found"
-}`;
-}
-
-// ── Full Pipeline: Scrape → Analyze → Save ───────────────────
-
-async function fullPipeline(data) {
-  // Step 1: Use provided scraped data or scrape current tab
-  let scrapedData = data?.scrapedData;
-  if (!scrapedData) {
-    const scrapeResult = await scrapeCurrentTab();
-    scrapedData = scrapeResult.data || scrapeResult;
-  }
-
-  // Step 2: If the business has a website, also scrape that
-  let websiteData = null;
-  const websiteUrl =
-    scrapedData.contact?.website || scrapedData.business?.website;
-  if (websiteUrl && !websiteUrl.includes("google.com") && !websiteUrl.includes("yelp.com")) {
-    try {
-      const wsResult = await scrapeWebsite(websiteUrl);
-      websiteData = wsResult.data || wsResult;
-    } catch {
-      // Website scrape failed, continue without it
-    }
-  }
-
-  // Merge website data if we got it
-  const combinedData = websiteData
-    ? { listing: scrapedData, website: websiteData }
-    : scrapedData;
-
-  // Step 3: AI Analysis
-  const analysis = await analyzeBusiness(combinedData);
-
-  // Step 4: Save as lead
-  const lead = {
-    ...analysis,
-    scrapedData: combinedData,
-    status: "analyzed",
-    createdAt: new Date().toISOString(),
-  };
-
-  await saveLead(lead);
-
-  return { success: true, lead, analysis };
-}
-
-// ── CRM API calls ────────────────────────────────────────────
+// ═════════════════════════════════════════════════════════════
+// Storage
+// ═════════════════════════════════════════════════════════════
 
 async function saveLead(leadData) {
-  const config = await getConfig();
-
-  // Save locally first
   const leads = await getLeadsFromStorage();
-  leads.unshift({
-    id: crypto.randomUUID(),
-    ...leadData,
-    savedAt: new Date().toISOString(),
-  });
+
+  // Deduplicate by business name
+  const existing = leads.findIndex(
+    (l) =>
+      l.businessName?.toLowerCase() === leadData.businessName?.toLowerCase()
+  );
+  if (existing >= 0) {
+    leads[existing] = { ...leads[existing], ...leadData };
+  } else {
+    leads.unshift(leadData);
+  }
+
   await chrome.storage.local.set({ leads });
 
-  // If CRM is configured, also sync to CRM
+  // Sync to CRM if configured
+  const config = await getConfig();
   if (config.apiKey && config.crmApiUrl) {
     try {
       await fetch(`${config.crmApiUrl}/api/leads`, {
@@ -307,15 +436,11 @@ async function saveLead(leadData) {
         body: JSON.stringify(leadData),
       });
     } catch {
-      // CRM sync failed, lead is saved locally
+      // CRM sync failed, saved locally
     }
   }
 
   return { success: true, leadCount: leads.length };
-}
-
-async function getLeads() {
-  return getLeadsFromStorage();
 }
 
 async function getLeadsFromStorage() {
@@ -323,19 +448,17 @@ async function getLeadsFromStorage() {
   return result.leads || [];
 }
 
+// ═════════════════════════════════════════════════════════════
+// Helpers
+// ═════════════════════════════════════════════════════════════
+
+function parseJSON(text) {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("Could not parse AI response");
+  return JSON.parse(match[0]);
+}
+
 // ── Badge ────────────────────────────────────────────────────
-
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  if (changeInfo.status !== "complete" || !tab.url) return;
-
-  const pageType = detectPageType(tab.url);
-  if (pageType !== "unknown") {
-    chrome.action.setBadgeText({ tabId, text: "S" });
-    chrome.action.setBadgeBackgroundColor({ tabId, color: "#000000" });
-  }
-});
-
-// ── Install handler ──────────────────────────────────────────
 
 chrome.runtime.onInstalled.addListener((details) => {
   if (details.reason === "install") {

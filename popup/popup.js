@@ -1,22 +1,30 @@
 // ============================================================
-// SiteScout — Popup Script
+// SiteScout — Popup Script (Autonomous Hunting)
 // ============================================================
 
 document.addEventListener("DOMContentLoaded", () => {
   // ── Elements ──
-  const scanBtn = document.getElementById("scanBtn");
-  const scanStatus = document.getElementById("scanStatus");
-  const resultsContainer = document.getElementById("resultsContainer");
-  const analyzeBtn = document.getElementById("analyzeBtn");
-  const buildBtn = document.getElementById("buildBtn");
-  const saveLeadBtn = document.getElementById("saveLeadBtn");
-  const fullPipelineBtn = document.getElementById("fullPipelineBtn");
+  const autoHuntBtn = document.getElementById("autoHuntBtn");
+  const huntBtn = document.getElementById("huntBtn");
+  const locationInput = document.getElementById("locationInput");
+  const industryInput = document.getElementById("industryInput");
+  const progressSection = document.getElementById("progressSection");
+  const progressCounter = document.getElementById("progressCounter");
+  const progressFill = document.getElementById("progressFill");
+  const liveFeed = document.getElementById("liveFeed");
+  const trendingTags = document.getElementById("trendingTags");
+  const stopBtn = document.getElementById("stopBtn");
   const settingsBtn = document.getElementById("settingsBtn");
   const leadCountEl = document.getElementById("leadCount");
+  const leadsList = document.getElementById("leadsList");
+  const leadDetail = document.getElementById("leadDetail");
 
-  // ── State ──
-  let scrapedData = null;
-  let analysisData = null;
+  let huntStopped = false;
+
+  // ── Load saved location ──
+  chrome.storage.sync.get(["lastLocation"], (r) => {
+    if (r.lastLocation) locationInput.value = r.lastLocation;
+  });
 
   // ── Tab switching ──
   document.querySelectorAll(".tab-btn").forEach((btn) => {
@@ -25,243 +33,214 @@ document.addEventListener("DOMContentLoaded", () => {
       document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
       btn.classList.add("active");
       document.getElementById(`${btn.dataset.tab}View`).classList.add("active");
-
-      if (btn.dataset.tab === "leads") loadLeads();
+      if (btn.dataset.tab === "leads") {
+        leadDetail.classList.remove("active");
+        leadDetail.innerHTML = "";
+        loadLeads();
+      }
     });
   });
 
-  // ── Settings ──
-  settingsBtn.addEventListener("click", () => {
-    chrome.runtime.openOptionsPage();
-  });
+  settingsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
 
-  // ── Scan ──
-  scanBtn.addEventListener("click", async () => {
-    setStatus("Scanning page...", "");
-    scanBtn.disabled = true;
-    scanBtn.classList.add("scanning");
-    scanBtn.textContent = "Scanning...";
-
-    try {
-      const response = await sendMessage({ type: "SCRAPE_CURRENT_TAB" });
-
-      if (response.error) {
-        setStatus(response.error, "error");
-        return;
-      }
-
-      scrapedData = response.data || response;
-      displayScrapedData(scrapedData);
-      resultsContainer.style.display = "block";
-      setStatus("Page scanned successfully", "success");
-    } catch (err) {
-      setStatus(`Scan failed: ${err.message}`, "error");
-    } finally {
-      scanBtn.disabled = false;
-      scanBtn.classList.remove("scanning");
-      scanBtn.textContent = "Scan This Page";
+  // ── Auto Hunt (AI picks the industries) ──
+  autoHuntBtn.addEventListener("click", async () => {
+    const location = locationInput.value.trim();
+    if (!location) {
+      locationInput.style.borderColor = "#C00";
+      locationInput.focus();
+      setTimeout(() => (locationInput.style.borderColor = "#E5E5E5"), 2000);
+      return;
     }
+
+    chrome.storage.sync.set({ lastLocation: location });
+    startHunt(location, null);
   });
 
-  // ── Analyze ──
-  analyzeBtn.addEventListener("click", async () => {
-    if (!scrapedData) return;
-
-    analyzeBtn.disabled = true;
-    analyzeBtn.textContent = "Analyzing with AI...";
-    setStatus("Claude is analyzing the business and finding gaps...", "");
-
-    try {
-      const response = await sendMessage({
-        type: "ANALYZE_BUSINESS",
-        data: scrapedData,
-      });
-
-      if (response.error) {
-        setStatus(response.error, "error");
-        return;
-      }
-
-      analysisData = response;
-      displayAnalysis(response);
-      setStatus("Analysis complete!", "success");
-
-      // Show build button
-      buildBtn.style.display = "block";
-      analyzeBtn.style.display = "none";
-    } catch (err) {
-      setStatus(`Analysis failed: ${err.message}`, "error");
-    } finally {
-      analyzeBtn.disabled = false;
-      analyzeBtn.textContent = "Analyze & Find Gaps";
+  // ── Manual Industry Hunt ──
+  huntBtn.addEventListener("click", async () => {
+    const location = locationInput.value.trim();
+    const industry = industryInput.value.trim();
+    if (!location) {
+      locationInput.style.borderColor = "#C00";
+      locationInput.focus();
+      setTimeout(() => (locationInput.style.borderColor = "#E5E5E5"), 2000);
+      return;
     }
+    if (!industry) {
+      industryInput.style.borderColor = "#C00";
+      industryInput.focus();
+      setTimeout(() => (industryInput.style.borderColor = "#E5E5E5"), 2000);
+      return;
+    }
+
+    chrome.storage.sync.set({ lastLocation: location });
+    startHunt(location, industry);
   });
 
-  // ── Build on Lovable ──
-  buildBtn.addEventListener("click", async () => {
-    if (!analysisData?.lovablePrompt) return;
-
-    // Copy prompt to clipboard
-    await navigator.clipboard.writeText(analysisData.lovablePrompt);
-    setStatus("Lovable prompt copied! Opening Lovable...", "success");
-
-    // Open Lovable in new tab
-    chrome.tabs.create({ url: "https://lovable.dev/projects" });
+  // ── Stop ──
+  stopBtn.addEventListener("click", () => {
+    huntStopped = true;
+    stopBtn.classList.remove("visible");
+    addFeedItem("skip", "Hunt stopped by user");
   });
 
-  // ── Save Lead ──
-  saveLeadBtn.addEventListener("click", async () => {
-    if (!scrapedData) return;
+  // ── Start the hunt ──
+  async function startHunt(location, industry) {
+    huntStopped = false;
+    autoHuntBtn.disabled = true;
+    huntBtn.disabled = true;
+    progressSection.classList.add("visible");
+    stopBtn.classList.add("visible");
+    liveFeed.innerHTML = "";
+    trendingTags.style.display = "none";
+    trendingTags.innerHTML = "";
+    progressFill.style.width = "0%";
+    progressCounter.textContent = "0 leads found";
 
-    saveLeadBtn.disabled = true;
-    saveLeadBtn.textContent = "Saving...";
+    let leadCount = 0;
 
     try {
-      const leadData = {
-        scrapedData,
-        analysis: analysisData || null,
-        businessName:
-          scrapedData.business?.name ||
-          analysisData?.businessName ||
-          "Unknown",
-        status: analysisData ? "analyzed" : "scraped",
-        createdAt: new Date().toISOString(),
-      };
+      if (!industry) {
+        // Step 1: AI finds trending industries for this location
+        addFeedItem("searching", `Researching what's hot in <strong>${esc(location)}</strong>...`);
+        progressFill.style.width = "5%";
 
-      const response = await sendMessage({
-        type: "SAVE_LEAD",
-        data: leadData,
-      });
+        const trends = await sendMessage({
+          type: "FIND_TRENDING_INDUSTRIES",
+          location,
+        });
 
-      if (response.error) {
-        setStatus(response.error, "error");
+        if (trends.error) {
+          addFeedItem("skip", `Error: ${trends.error}`);
+          return;
+        }
+
+        // Show trending tags
+        trendingTags.style.display = "flex";
+        (trends.industries || []).forEach((ind) => {
+          const tag = document.createElement("span");
+          tag.className = `trend-tag${ind.hot ? " hot" : ""}`;
+          tag.textContent = ind.name;
+          trendingTags.appendChild(tag);
+        });
+
+        addFeedItem("found", `Found <strong>${trends.industries.length} trending industries</strong>`);
+        progressFill.style.width = "10%";
+
+        // Step 2: Hunt in each industry
+        const industries = trends.industries || [];
+        for (let i = 0; i < industries.length; i++) {
+          if (huntStopped) break;
+
+          const ind = industries[i];
+          const pct = 10 + ((i + 1) / industries.length) * 85;
+          progressFill.style.width = `${pct}%`;
+
+          addFeedItem("searching", `Searching for <strong>${esc(ind.name)}</strong> in ${esc(location)}...`);
+
+          const results = await sendMessage({
+            type: "HUNT_INDUSTRY",
+            location,
+            industry: ind.name,
+            reason: ind.reason,
+          });
+
+          if (huntStopped) break;
+          if (results.error) {
+            addFeedItem("skip", `${esc(ind.name)}: ${results.error}`);
+            continue;
+          }
+
+          const leads = results.leads || [];
+          for (const lead of leads) {
+            leadCount++;
+            progressCounter.textContent = `${leadCount} leads found`;
+            addFeedItem(
+              "done",
+              `<strong>${esc(lead.businessName)}</strong> — ${esc(lead.gapSummary || lead.gaps?.[0]?.gap || "needs a better site")}`
+            );
+          }
+
+          if (leads.length === 0) {
+            addFeedItem("skip", `${esc(ind.name)}: no weak websites found (all looking good)`);
+          }
+        }
       } else {
-        setStatus(
-          `Lead saved! (${response.leadCount} total)`,
-          "success"
-        );
-        updateLeadCount();
-      }
-    } catch (err) {
-      setStatus(`Save failed: ${err.message}`, "error");
-    } finally {
-      saveLeadBtn.disabled = false;
-      saveLeadBtn.textContent = "Save as Lead";
-    }
-  });
+        // Direct industry hunt
+        addFeedItem("searching", `Searching for <strong>${esc(industry)}</strong> in <strong>${esc(location)}</strong>...`);
+        progressFill.style.width = "20%";
 
-  // ── Full Pipeline ──
-  fullPipelineBtn.addEventListener("click", async () => {
-    fullPipelineBtn.disabled = true;
-    fullPipelineBtn.textContent = "Running pipeline...";
-    setStatus("Running full pipeline: Scan → Analyze → Save...", "");
+        const results = await sendMessage({
+          type: "HUNT_INDUSTRY",
+          location,
+          industry,
+          reason: "User-specified industry",
+        });
 
-    try {
-      const response = await sendMessage({
-        type: "FULL_PIPELINE",
-        data: { scrapedData },
-      });
+        progressFill.style.width = "80%";
 
-      if (response.error) {
-        setStatus(response.error, "error");
-        return;
-      }
+        if (results.error) {
+          addFeedItem("skip", `Error: ${results.error}`);
+          return;
+        }
 
-      scrapedData = response.lead?.scrapedData || scrapedData;
-      analysisData = response.analysis;
+        const leads = results.leads || [];
+        for (const lead of leads) {
+          leadCount++;
+          progressCounter.textContent = `${leadCount} leads found`;
+          addFeedItem(
+            "done",
+            `<strong>${esc(lead.businessName)}</strong> — ${esc(lead.gapSummary || lead.gaps?.[0]?.gap || "needs a better site")}`
+          );
+        }
 
-      if (analysisData) {
-        displayScrapedData(scrapedData);
-        displayAnalysis(analysisData);
-        resultsContainer.style.display = "block";
-        buildBtn.style.display = "block";
-        analyzeBtn.style.display = "none";
+        if (leads.length === 0) {
+          addFeedItem("skip", "No weak websites found in this industry here");
+        }
       }
 
-      setStatus("Pipeline complete! Site prompt ready.", "success");
+      progressFill.style.width = "100%";
+      addFeedItem("done", `<strong>Hunt complete! ${leadCount} leads ready.</strong>`);
       updateLeadCount();
     } catch (err) {
-      setStatus(`Pipeline failed: ${err.message}`, "error");
+      addFeedItem("skip", `Error: ${err.message}`);
     } finally {
-      fullPipelineBtn.disabled = false;
-      fullPipelineBtn.textContent = "Full Pipeline (Scan → Build → Email)";
-    }
-  });
-
-  // ── Display helpers ──
-
-  function displayScrapedData(data) {
-    const biz = data.business || {};
-    const contact = data.contact || {};
-
-    document.getElementById("bizName").textContent =
-      biz.name || "Unknown Business";
-    document.getElementById("bizCategory").textContent =
-      biz.category || biz.categories?.join(", ") || "Business";
-    document.getElementById("bizPhone").textContent = contact.phone
-      ? `Phone: ${contact.phone}`
-      : "";
-    document.getElementById("bizAddress").textContent = contact.address
-      ? `Address: ${contact.address}`
-      : "";
-    document.getElementById("bizWebsite").textContent = contact.website
-      ? `Website: ${contact.website}`
-      : "No website found";
-    document.getElementById("bizRating").textContent = biz.rating
-      ? `Rating: ${biz.rating} (${biz.reviewCount || "?"} reviews)`
-      : "";
-  }
-
-  function displayAnalysis(analysis) {
-    const gapsSection = document.getElementById("gapsSection");
-    const gapsList = document.getElementById("gapsList");
-    const promptPreview = document.getElementById("promptPreview");
-
-    if (analysis.gaps && analysis.gaps.length > 0) {
-      gapsSection.style.display = "block";
-      gapsList.innerHTML = analysis.gaps
-        .map(
-          (gap) => `
-        <div class="gap-item">
-          <div class="impact ${gap.impact}"></div>
-          <div>
-            <div class="gap-text">${escapeHtml(gap.gap)}</div>
-            <div class="gap-explain">${escapeHtml(gap.explanation)}</div>
-          </div>
-        </div>
-      `
-        )
-        .join("");
-    }
-
-    if (analysis.lovablePrompt) {
-      promptPreview.style.display = "block";
-      promptPreview.textContent = analysis.lovablePrompt;
+      autoHuntBtn.disabled = false;
+      huntBtn.disabled = false;
+      stopBtn.classList.remove("visible");
     }
   }
 
-  function setStatus(text, type) {
-    scanStatus.textContent = text;
-    scanStatus.className = `scan-status visible ${type}`;
-  }
+  // ── Feed helper ──
+  function addFeedItem(type, html) {
+    const icons = {
+      searching: "&#128270;",
+      found: "&#9889;",
+      analyzing: "&#129504;",
+      done: "&#9989;",
+      skip: "&#9898;",
+    };
 
-  function escapeHtml(str) {
-    const div = document.createElement("div");
-    div.textContent = str;
-    return div.innerHTML;
+    const item = document.createElement("div");
+    item.className = "feed-item";
+    item.innerHTML = `
+      <div class="feed-icon ${type}">${icons[type] || "&#8226;"}</div>
+      <div class="feed-text">${html}</div>
+    `;
+    liveFeed.prepend(item);
   }
 
   // ── Leads ──
-
   async function loadLeads() {
     const leads = await sendMessage({ type: "GET_LEADS" });
-    const container = document.getElementById("leadsList");
+    const container = leadsList;
 
     if (!leads || leads.length === 0) {
       container.innerHTML = `
         <div class="empty-state">
-          <div class="icon">&#128269;</div>
-          <p>No leads yet. Scan a business page to get started.</p>
+          <p>No leads yet.</p>
+          <p>Go to Hunt tab and enter your city.</p>
         </div>
       `;
       return;
@@ -269,18 +248,104 @@ document.addEventListener("DOMContentLoaded", () => {
 
     container.innerHTML = leads
       .map(
-        (lead) => `
-      <div class="lead-item" data-id="${lead.id}">
-        <div>
-          <div class="lead-name">${escapeHtml(
-            lead.businessName || lead.scrapedData?.business?.name || "Unknown"
-          )}</div>
+        (lead, i) => `
+      <div class="lead-card" data-index="${i}">
+        <div class="lead-top">
+          <div>
+            <div class="lead-name">${esc(lead.businessName || "Unknown")}</div>
+            <div class="lead-category">${esc(lead.businessType || lead.industry || "")}</div>
+          </div>
+          <span class="lead-status ${lead.status || "analyzed"}">${lead.status || "analyzed"}</span>
         </div>
-        <span class="lead-status ${lead.status}">${lead.status}</span>
+        ${
+          lead.gaps && lead.gaps.length > 0
+            ? `<div class="lead-gaps">${lead.gaps
+                .slice(0, 3)
+                .map((g) => `<span class="gap-tag">${esc(g.gap)}</span>`)
+                .join("")}</div>`
+            : ""
+        }
+        ${lead.currentSiteQuality ? `<div class="lead-score">Current site: ${esc(lead.currentSiteQuality)}</div>` : ""}
       </div>
     `
       )
       .join("");
+
+    // Click handler for lead detail
+    container.querySelectorAll(".lead-card").forEach((card) => {
+      card.addEventListener("click", () => {
+        const idx = parseInt(card.dataset.index);
+        showLeadDetail(leads[idx]);
+      });
+    });
+  }
+
+  function showLeadDetail(lead) {
+    leadsList.style.display = "none";
+    leadDetail.classList.add("active");
+
+    leadDetail.innerHTML = `
+      <button class="back-btn" id="backToLeads">&larr; Back to leads</button>
+      <div class="detail-name">${esc(lead.businessName || "Unknown")}</div>
+      <div class="detail-category">${esc(lead.businessType || "")} &middot; ${esc(lead.contact?.address || lead.scrapedData?.contact?.address || "")}</div>
+
+      ${
+        lead.gapSummary
+          ? `<div class="detail-section"><h4>Opportunity</h4><p>${esc(lead.gapSummary)}</p></div>`
+          : ""
+      }
+
+      ${
+        lead.gaps && lead.gaps.length
+          ? `<div class="detail-section">
+              <h4>Revenue Gaps</h4>
+              ${lead.gaps
+                .map(
+                  (g) => `
+                <div class="gap-item">
+                  <div class="impact-dot ${g.impact}"></div>
+                  <div>
+                    <div class="gap-text">${esc(g.gap)}</div>
+                    <div class="gap-explain">${esc(g.explanation)}</div>
+                  </div>
+                </div>
+              `
+                )
+                .join("")}
+            </div>`
+          : ""
+      }
+
+      ${
+        lead.lovablePrompt
+          ? `<div class="detail-section">
+              <h4>Lovable Prompt</h4>
+              <div class="prompt-preview">${esc(lead.lovablePrompt)}</div>
+            </div>`
+          : ""
+      }
+
+      <div class="detail-actions">
+        ${lead.lovablePrompt ? '<button class="action-btn primary" id="copyPromptBtn">Copy Prompt & Open Lovable</button>' : ""}
+        ${lead.contact?.phone || lead.scrapedData?.contact?.phone ? `<button class="action-btn secondary" id="callLeadBtn">Call ${esc(lead.contact?.phone || lead.scrapedData?.contact?.phone)}</button>` : ""}
+        ${lead.contact?.email || lead.scrapedData?.contact?.email ? `<button class="action-btn secondary" id="emailLeadBtn">Email ${esc(lead.contact?.email || lead.scrapedData?.contact?.email)}</button>` : ""}
+      </div>
+    `;
+
+    leadDetail.querySelector("#backToLeads").addEventListener("click", () => {
+      leadDetail.classList.remove("active");
+      leadDetail.innerHTML = "";
+      leadsList.style.display = "block";
+    });
+
+    const copyBtn = leadDetail.querySelector("#copyPromptBtn");
+    if (copyBtn) {
+      copyBtn.addEventListener("click", async () => {
+        await navigator.clipboard.writeText(lead.lovablePrompt);
+        copyBtn.textContent = "Copied!";
+        chrome.tabs.create({ url: "https://lovable.dev/projects" });
+      });
+    }
   }
 
   async function updateLeadCount() {
@@ -289,7 +354,13 @@ document.addEventListener("DOMContentLoaded", () => {
     leadCountEl.textContent = count > 0 ? `(${count})` : "";
   }
 
-  // ── Messaging ──
+  // ── Helpers ──
+  function esc(str) {
+    if (!str) return "";
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
 
   function sendMessage(msg) {
     return new Promise((resolve, reject) => {

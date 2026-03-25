@@ -4,6 +4,7 @@
 
 document.addEventListener("DOMContentLoaded", () => {
   const claudeKeyInput = document.getElementById("claudeKey");
+  const serpKeyInput = document.getElementById("serpKey");
   const crmUrlInput = document.getElementById("crmUrl");
   const apiKeyInput = document.getElementById("apiKey");
   const lovableEmailInput = document.getElementById("lovableEmail");
@@ -12,9 +13,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Load saved settings
   chrome.storage.sync.get(
-    ["claudeApiKey", "crmApiUrl", "apiKey", "lovableEmail"],
+    ["claudeApiKey", "serpApiKey", "crmApiUrl", "apiKey", "lovableEmail"],
     (result) => {
       claudeKeyInput.value = result.claudeApiKey || "";
+      serpKeyInput.value = result.serpApiKey || "";
       crmUrlInput.value = result.crmApiUrl || "";
       apiKeyInput.value = result.apiKey || "";
       lovableEmailInput.value = result.lovableEmail || "";
@@ -26,6 +28,7 @@ document.addEventListener("DOMContentLoaded", () => {
     chrome.storage.sync.set(
       {
         claudeApiKey: claudeKeyInput.value.trim(),
+        serpApiKey: serpKeyInput.value.trim(),
         crmApiUrl: crmUrlInput.value.trim(),
         apiKey: apiKeyInput.value.trim(),
         lovableEmail: lovableEmailInput.value.trim(),
