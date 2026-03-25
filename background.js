@@ -106,8 +106,8 @@ async function startFullHunt(location, specificIndustry) {
   });
 
   const config = await getConfig();
-  if (!config.claudeApiKey) {
-    await addFeedItem("skip", "Error: Add your Claude API key in Settings first");
+  if (!config.serpApiKey) {
+    await addFeedItem("skip", "Error: Add your SerpAPI key in Settings first");
     await updateHuntStatus({ running: false, status: "Error" });
     return;
   }
@@ -115,51 +115,238 @@ async function startFullHunt(location, specificIndustry) {
   let leadCount = 0;
 
   try {
-    let industries;
+    // ── STEP 1: Search Google Maps for businesses (NO Claude needed) ──
+    const industries = specificIndustry
+      ? [specificIndustry]
+      : [
+          "medspa",
+          "auto detailing",
+          "restaurant",
+          "nail salon",
+          "barbershop",
+          "yoga studio",
+          "personal trainer",
+          "pet grooming",
+          "dentist",
+          "chiropractor",
+        ];
 
-    if (specificIndustry) {
-      // User specified an industry — just hunt that one
-      industries = [{ name: specificIndustry, searchQuery: `${specificIndustry} in ${location}`, hot: true, reason: "User-specified industry" }];
-      await addFeedItem("searching", `Searching for ${specificIndustry} in ${location}...`);
-    } else {
-      // STEP 1: Find trending industries
-      await addFeedItem("searching", `Researching what's hot in ${location}...`);
-      await updateHuntStatus({ status: "Researching trends...", progress: 5 });
+    // Also check Google Trends to see which of these are actually hot
+    let trendScores = {};
+    try {
+      await addFeedItem("searching", `Checking Google Trends for ${location}...`);
+      trendScores = await fetchGoogleTrendsScores(config.serpApiKey, location, industries);
 
-      const trends = await findTrendingIndustries(location);
-      industries = trends.industries || [];
+      // Sort industries by trend score (hottest first)
+      industries.sort((a, b) => (trendScores[b] || 0) - (trendScores[a] || 0));
 
-      await updateHuntStatus({ trends: industries, progress: 10 });
-      await addFeedItem("found", `Found ${industries.length} trending industries`);
+      const trendTags = industries.slice(0, 7).map((name) => ({
+        name,
+        hot: (trendScores[name] || 0) > 50,
+        score: trendScores[name] || 0,
+      }));
+      await updateHuntStatus({ trends: trendTags, progress: 5 });
+      await addFeedItem("found", `Ranked industries by search demand`);
+    } catch {
+      await addFeedItem("skip", "Trends check skipped — searching all industries");
     }
 
-    // STEP 2: Hunt each industry
-    for (let i = 0; i < industries.length; i++) {
+    // ── STEP 2: For each industry, search Google Maps ──
+    let allBusinesses = [];
+
+    for (let i = 0; i < Math.min(industries.length, 5); i++) {
       if (huntState.stopped) break;
 
       const ind = industries[i];
-      const pct = specificIndustry ? 20 : 10 + ((i + 1) / industries.length) * 85;
-
-      await updateHuntStatus({ status: `Hunting ${ind.name}...`, progress: pct });
-      await addFeedItem("searching", `Searching for ${ind.name} in ${location}...`);
+      const pct = 5 + ((i + 1) / Math.min(industries.length, 5)) * 30;
+      await updateHuntStatus({ status: `Searching Google Maps: ${ind}...`, progress: pct });
+      await addFeedItem("searching", `Searching Google Maps for "${ind}" in ${location}...`);
 
       try {
-        const results = await huntIndustry(location, ind.name, ind.reason);
+        const businesses = await searchGoogleMaps(config.serpApiKey, ind, location);
+        const count = businesses.length;
+        await addFeedItem("found", `Found ${count} ${ind} businesses`);
 
-        if (huntState.stopped) break;
-
-        const newLeads = results.leads || [];
-        for (const lead of newLeads) {
-          leadCount++;
-          await updateHuntStatus({ leadCount });
-          await addFeedItem("done", `${lead.businessName} — ${lead.gapSummary || lead.gaps?.[0]?.gap || "needs a better site"}`);
-        }
-
-        if (newLeads.length === 0) {
-          await addFeedItem("skip", `${ind.name}: no weak websites found`);
+        for (const biz of businesses) {
+          biz._industry = ind;
+          biz._trendScore = trendScores[ind] || 0;
+          allBusinesses.push(biz);
         }
       } catch (err) {
-        await addFeedItem("skip", `${ind.name}: ${err.message}`);
+        await addFeedItem("skip", `${ind}: search failed — ${err.message}`);
+      }
+    }
+
+    if (allBusinesses.length === 0) {
+      await addFeedItem("skip", "No businesses found. Try a different location.");
+      await updateHuntStatus({ running: false, status: "No results" });
+      return;
+    }
+
+    await addFeedItem("found", `${allBusinesses.length} total businesses found. Now scraping websites...`);
+
+    // ── STEP 3: Scrape their websites (NO Claude needed) ──
+    const scrapedBusinesses = [];
+
+    for (let i = 0; i < allBusinesses.length; i++) {
+      if (huntState.stopped) break;
+
+      const biz = allBusinesses[i];
+      const pct = 35 + ((i + 1) / allBusinesses.length) * 30;
+      await updateHuntStatus({ status: `Scraping ${biz.name}...`, progress: pct });
+
+      let websiteData = null;
+      let reviewsData = null;
+
+      // Quick checks BEFORE scraping — skip businesses that clearly have good sites
+      // Unclaimed listing or no website = instant lead candidate
+      if (!biz.website) {
+        await addFeedItem("found", `${biz.name} — NO website at all`);
+        scrapedBusinesses.push({ biz, websiteData: null, reviewsData: null, noSite: true });
+        continue;
+      }
+
+      try {
+        // Scrape website + pull reviews in parallel
+        const [wsResult, revResult] = await Promise.allSettled([
+          scrapeWebsite(biz.website),
+          biz.placeId ? fetchBusinessReviews(config.serpApiKey, biz.placeId) : Promise.resolve(null),
+        ]);
+
+        websiteData = wsResult.status === "fulfilled" ? wsResult.value : null;
+        reviewsData = revResult.status === "fulfilled" ? revResult.value : null;
+
+        // Quick quality check without Claude
+        const quality = quickSiteScore(websiteData);
+        if (quality === "good") {
+          await addFeedItem("skip", `${biz.name} — site looks solid, skipping`);
+          continue;
+        }
+
+        await addFeedItem("found", `${biz.name} — site quality: ${quality}`);
+        scrapedBusinesses.push({ biz, websiteData, reviewsData, quality });
+      } catch {
+        await addFeedItem("found", `${biz.name} — site broken/unreachable`);
+        scrapedBusinesses.push({ biz, websiteData: { error: "unreachable" }, reviewsData: null, quality: "poor" });
+      }
+    }
+
+    if (scrapedBusinesses.length === 0) {
+      await addFeedItem("done", "All businesses have solid websites — no opportunities found.");
+      await updateHuntStatus({ running: false, status: "Complete", progress: 100 });
+      return;
+    }
+
+    await addFeedItem("analyzing", `${scrapedBusinesses.length} weak/missing websites found. AI analyzing gaps...`);
+
+    // ── STEP 4: NOW Claude analyzes ONLY the weak ones ──
+    if (!config.claudeApiKey) {
+      // Save leads without AI analysis — still useful
+      for (const item of scrapedBusinesses) {
+        const lead = {
+          id: crypto.randomUUID(),
+          businessName: item.biz.name,
+          businessType: item.biz._industry,
+          currentSiteQuality: item.noSite ? "none" : (item.quality || "poor"),
+          contact: {
+            phone: item.biz.phone || "",
+            address: item.biz.address || "",
+            website: item.biz.website || "",
+          },
+          googleMapsData: {
+            rating: item.biz.rating,
+            reviews: item.biz.reviews,
+            placeId: item.biz.placeId,
+            thumbnail: item.biz.thumbnail,
+            unclaimed: item.biz.unclaimed,
+          },
+          scrapedData: item.websiteData,
+          industry: item.biz._industry,
+          location,
+          status: "scraped",
+          savedAt: new Date().toISOString(),
+        };
+        await saveLead(lead);
+        leadCount++;
+        await updateHuntStatus({ leadCount });
+        await addFeedItem("done", `${item.biz.name} — saved (add Claude key for gap analysis)`);
+      }
+    } else {
+      for (let i = 0; i < scrapedBusinesses.length; i++) {
+        if (huntState.stopped) break;
+
+        const item = scrapedBusinesses[i];
+        const pct = 65 + ((i + 1) / scrapedBusinesses.length) * 30;
+        await updateHuntStatus({ status: `Analyzing ${item.biz.name}...`, progress: pct });
+
+        try {
+          const analysis = await analyzeBusinessForLeadGen(
+            config.claudeApiKey,
+            item.biz,
+            item.websiteData,
+            item.reviewsData,
+            item.biz._industry,
+            `Trend score: ${item.biz._trendScore}/100`
+          );
+
+          if (analysis && analysis.currentSiteQuality !== "good" && analysis.gaps?.length > 0) {
+            const lead = {
+              id: crypto.randomUUID(),
+              ...analysis,
+              contact: {
+                phone: item.biz.phone || "",
+                address: item.biz.address || "",
+                website: item.biz.website || "",
+                email: item.websiteData?.contact?.email || "",
+              },
+              googleMapsData: {
+                rating: item.biz.rating,
+                reviews: item.biz.reviews,
+                placeId: item.biz.placeId,
+                thumbnail: item.biz.thumbnail,
+                unclaimed: item.biz.unclaimed,
+              },
+              reviewsData: item.reviewsData || null,
+              scrapedData: item.websiteData,
+              industry: item.biz._industry,
+              location,
+              status: "analyzed",
+              savedAt: new Date().toISOString(),
+            };
+
+            await saveLead(lead);
+            leadCount++;
+            await updateHuntStatus({ leadCount });
+            await addFeedItem("done", `${lead.businessName} — ${lead.gapSummary || lead.gaps?.[0]?.gap || "opportunity found"}`);
+          }
+        } catch (err) {
+          // Claude failed for this one — save as scraped lead anyway
+          const lead = {
+            id: crypto.randomUUID(),
+            businessName: item.biz.name,
+            businessType: item.biz._industry,
+            currentSiteQuality: item.noSite ? "none" : (item.quality || "poor"),
+            contact: {
+              phone: item.biz.phone || "",
+              address: item.biz.address || "",
+              website: item.biz.website || "",
+            },
+            googleMapsData: {
+              rating: item.biz.rating,
+              reviews: item.biz.reviews,
+              placeId: item.biz.placeId,
+            },
+            scrapedData: item.websiteData,
+            industry: item.biz._industry,
+            location,
+            status: "scraped",
+            savedAt: new Date().toISOString(),
+          };
+          await saveLead(lead);
+          leadCount++;
+          await updateHuntStatus({ leadCount });
+          await addFeedItem("done", `${item.biz.name} — saved (AI analysis failed, will retry later)`);
+        }
       }
     }
 
@@ -169,6 +356,47 @@ async function startFullHunt(location, specificIndustry) {
     await addFeedItem("skip", `Error: ${err.message}`);
     await updateHuntStatus({ running: false, status: "Error" });
   }
+}
+
+// ── Quick site quality check WITHOUT Claude ──────────────────
+
+function quickSiteScore(websiteData) {
+  if (!websiteData || websiteData.error) return "none";
+
+  let score = 0;
+  const d = websiteData;
+
+  // Has basic structure
+  if (d.structure?.navigation?.length > 3) score += 2;
+  if (d.structure?.headings?.length > 3) score += 1;
+  if (d.structure?.isMobileResponsive) score += 2;
+  if (d.structure?.hasSsl) score += 1;
+  if (d.structure?.hasAnalytics) score += 1;
+
+  // Has content
+  if (d.content?.services?.length > 3) score += 2;
+  if (d.content?.heroText?.length > 50) score += 1;
+
+  // Has branding
+  if (d.branding?.logoUrl) score += 1;
+  if (d.branding?.fonts?.length > 1) score += 1;
+
+  // Has contact info
+  if (d.contact?.email) score += 1;
+  if (d.contact?.socialLinks?.length > 1) score += 1;
+
+  // Photos
+  if (d.photos?.length > 5) score += 1;
+
+  // Tech — modern frameworks = probably decent site
+  if (d.structure?.tech?.some((t) => ["React", "Vue", "Angular", "Shopify"].includes(t))) score += 3;
+
+  // Old builders = probably needs a redo
+  if (d.structure?.tech?.some((t) => ["Wix", "Weebly", "GoDaddy"].includes(t))) score -= 2;
+
+  if (score >= 12) return "good";
+  if (score >= 7) return "average";
+  return "poor";
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -292,6 +520,46 @@ async function fetchLocalNews(serpApiKey, location) {
         `- "${h.title}" (${h.source}, ${h.date})${h.snippet ? ` — ${h.snippet}` : ""}`
     )
     .join("\n");
+}
+
+// ── Fetch Google Trends scores for industries (no Claude) ────
+
+async function fetchGoogleTrendsScores(serpApiKey, location, industries) {
+  const stateMatch = location.match(
+    /\b(AZ|CA|TX|FL|NY|NV|CO|WA|OR|IL|GA|NC|SC|TN|OH|PA|VA|MA|NJ|MD|MI|MN|MO|IN|WI|CT|AL|LA|KY|OK|UT|AR|MS|KS|IA|NE|ID|HI|NM|WV|NH|ME|RI|MT|DE|SD|ND|AK|VT|WY|DC)\b/i
+  );
+  const geo = stateMatch ? `US-${stateMatch[1].toUpperCase()}` : "US";
+
+  const scores = {};
+
+  // SerpAPI Google Trends supports max 5 queries at once
+  for (let i = 0; i < industries.length; i += 5) {
+    const batch = industries.slice(i, i + 5);
+    const query = batch.join(",");
+
+    try {
+      const url =
+        `https://serpapi.com/search.json?engine=google_trends` +
+        `&q=${encodeURIComponent(query)}` +
+        `&geo=${geo}` +
+        `&data_type=TIMESERIES` +
+        `&date=today+3-m` +
+        `&api_key=${serpApiKey}`;
+
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+
+      const averages = data.interest_over_time?.averages || [];
+      for (const avg of averages) {
+        scores[avg.query] = avg.value;
+      }
+    } catch {
+      // Continue without scores for this batch
+    }
+  }
+
+  return scores;
 }
 
 // ── Fetch Google Trends data for local service industries ────
