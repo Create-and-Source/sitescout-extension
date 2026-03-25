@@ -196,7 +196,7 @@ async function startFullHunt(location, specificIndustry) {
 
     await addFeedItem("found", `${allBusinesses.length} total businesses found. Now scraping websites...`);
 
-    // ── STEP 3: Scrape their websites (NO Claude needed) ──
+    // ── STEP 3: 5-layer verification — only airtight leads survive ──
     const scrapedBusinesses = [];
 
     for (let i = 0; i < allBusinesses.length; i++) {
@@ -204,52 +204,151 @@ async function startFullHunt(location, specificIndustry) {
 
       const biz = allBusinesses[i];
       const pct = 35 + ((i + 1) / allBusinesses.length) * 30;
-      await updateHuntStatus({ status: `Scraping ${biz.name}...`, progress: pct });
+      await updateHuntStatus({ status: `Verifying ${biz.name}...`, progress: pct });
 
+      // ─── CHECK 1: Google Maps data pre-filter ───
+      const svcOpts = biz.serviceOptions || {};
+      const hasReservations = svcOpts.dine_in || svcOpts.reservations;
+      const hasOnlineOrdering = svcOpts.delivery || svcOpts.takeout;
+      const isEstablished = biz.rating >= 4.3 && biz.reviews > 200;
+
+      if (isEstablished && (hasReservations || hasOnlineOrdering) && biz.website) {
+        await addFeedItem("skip", `${biz.name} — established (${biz.rating}/5, ${biz.reviews} reviews) with online services`);
+        continue;
+      }
+
+      // ─── CHECK 2: Verify website exists (don't trust Google Maps alone) ───
+      let websiteUrl = biz.website || "";
+
+      if (!websiteUrl) {
+        // Google Maps didn't list a website — search for one before giving up
+        try {
+          const searchUrl = `https://serpapi.com/search.json?engine=google` +
+            `&q=${encodeURIComponent(`"${biz.name}" ${biz.address || location} website`)}` +
+            `&num=3&api_key=${config.serpApiKey}`;
+          const searchRes = await fetch(searchUrl);
+          if (searchRes.ok) {
+            const searchData = await searchRes.json();
+            const organic = searchData.organic_results || [];
+            // Look for their own domain (not yelp, google, facebook, etc.)
+            const skipDomains = ["yelp.com", "google.com", "facebook.com", "instagram.com",
+              "twitter.com", "tripadvisor.com", "yellowpages.com", "bbb.org",
+              "nextdoor.com", "mapquest.com", "placeid.site", "yahoo.com"];
+            for (const result of organic) {
+              const domain = (result.link || "").toLowerCase();
+              if (!skipDomains.some(d => domain.includes(d))) {
+                websiteUrl = result.link;
+                biz.website = websiteUrl;
+                break;
+              }
+            }
+          }
+        } catch {}
+
+        if (!websiteUrl) {
+          // Confirmed: no website found anywhere
+          await addFeedItem("found", `${biz.name} — verified: no website found anywhere`);
+          scrapedBusinesses.push({ biz, websiteData: null, reviewsData: null, noSite: true });
+          continue;
+        } else {
+          await addFeedItem("searching", `${biz.name} — Google Maps had no website, but found ${websiteUrl}`);
+        }
+      }
+
+      // ─── CHECK 3: Scrape the website + pull reviews ───
       let websiteData = null;
       let reviewsData = null;
 
-      // Quick checks BEFORE scraping — skip businesses that clearly don't need us
-      // High reviews + reservations/ordering already = skip
-      const svcOpts = biz.serviceOptions || {};
-      const hasReservations = svcOpts.dine_in || svcOpts.reservations;
-      const isEstablished = biz.rating >= 4.3 && biz.reviews > 200;
-
-      if (isEstablished && hasReservations && biz.website) {
-        await addFeedItem("skip", `${biz.name} — ${biz.rating}/5, ${biz.reviews} reviews, already established with reservations`);
-        continue;
-      }
-
-      // No website = instant lead candidate
-      if (!biz.website) {
-        await addFeedItem("found", `${biz.name} — NO website at all`);
-        scrapedBusinesses.push({ biz, websiteData: null, reviewsData: null, noSite: true });
-        continue;
-      }
-
       try {
-        // Scrape website + pull reviews in parallel
         const [wsResult, revResult] = await Promise.allSettled([
-          scrapeWebsite(biz.website),
+          scrapeWebsite(websiteUrl),
           biz.placeId ? fetchBusinessReviews(config.serpApiKey, biz.placeId) : Promise.resolve(null),
         ]);
 
         websiteData = wsResult.status === "fulfilled" ? wsResult.value : null;
         reviewsData = revResult.status === "fulfilled" ? revResult.value : null;
+      } catch {}
 
-        // Quick quality check without Claude
-        const quality = quickSiteScore(websiteData);
-        if (quality === "good") {
-          await addFeedItem("skip", `${biz.name} — site looks solid, skipping`);
-          continue;
+      // ─── CHECK 4: Multi-signal quality score ───
+      const quality = quickSiteScore(websiteData);
+
+      // If scrape failed but they have a website, try a simple fetch to check if it's real
+      if (!websiteData || websiteData.error) {
+        try {
+          const headCheck = await fetch(websiteUrl.startsWith("http") ? websiteUrl : `https://${websiteUrl}`, {
+            method: "HEAD",
+            signal: AbortSignal.timeout(5000),
+          });
+          if (headCheck.ok) {
+            // Site is live but we couldn't scrape it — don't assume it's bad
+            await addFeedItem("skip", `${biz.name} — site is live but couldn't scrape, skipping to be safe`);
+            continue;
+          }
+        } catch {
+          // Site truly unreachable
         }
-
-        await addFeedItem("found", `${biz.name} — site quality: ${quality}`);
-        scrapedBusinesses.push({ biz, websiteData, reviewsData, quality });
-      } catch {
-        await addFeedItem("found", `${biz.name} — site broken/unreachable`);
-        scrapedBusinesses.push({ biz, websiteData: { error: "unreachable" }, reviewsData: null, quality: "poor" });
       }
+
+      if (quality === "good") {
+        await addFeedItem("skip", `${biz.name} — site quality: good, skipping`);
+        continue;
+      }
+
+      // ─── CHECK 5: Look for booking/ordering platforms (Fresha, Squire, Vagaro, etc.) ───
+      let hasExternalBooking = false;
+      const pageText = JSON.stringify(websiteData || {}).toLowerCase();
+      const bookingPlatforms = [
+        "fresha.com", "squire.com", "getsquire.com", "vagaro.com", "booksy.com",
+        "schedulicity.com", "mindbody", "mindbodyonline", "acuity", "acuityscheduling",
+        "calendly.com", "jane.app", "boulevard.io", "zenoti.com",
+        "opentable.com", "resy.com", "yelp.com/reservations", "tock.com",
+        "doordash.com", "grubhub.com", "ubereats.com", "toast", "chownow",
+        "square.site", "squareup.com", "clover.com",
+      ];
+
+      for (const platform of bookingPlatforms) {
+        if (pageText.includes(platform)) {
+          hasExternalBooking = true;
+          break;
+        }
+      }
+
+      // Also check Google search results for booking platforms
+      if (!hasExternalBooking) {
+        try {
+          const bookingSearch = `https://serpapi.com/search.json?engine=google` +
+            `&q=${encodeURIComponent(`"${biz.name}" ${location} book appointment OR reservations OR order online`)}` +
+            `&num=5&api_key=${config.serpApiKey}`;
+          const bkRes = await fetch(bookingSearch);
+          if (bkRes.ok) {
+            const bkData = await bkRes.json();
+            const allLinks = (bkData.organic_results || []).map(r => (r.link || "").toLowerCase()).join(" ");
+            for (const platform of bookingPlatforms) {
+              if (allLinks.includes(platform)) {
+                hasExternalBooking = true;
+                break;
+              }
+            }
+          }
+        } catch {}
+      }
+
+      // If they have booking AND a decent site, they're covered
+      if (hasExternalBooking && quality === "average") {
+        await addFeedItem("skip", `${biz.name} — has booking platform + average site, not a strong lead`);
+        continue;
+      }
+
+      // ─── PASSED ALL 5 CHECKS — this is a real lead ───
+      const reasons = [];
+      if (quality === "none") reasons.push("no functional website");
+      else if (quality === "poor") reasons.push("poor website quality");
+      else reasons.push("average site with gaps");
+      if (!hasExternalBooking) reasons.push("no online booking/ordering");
+      if (biz.unclaimed) reasons.push("unclaimed Google listing");
+
+      await addFeedItem("found", `${biz.name} — VERIFIED lead: ${reasons.join(", ")}`);
+      scrapedBusinesses.push({ biz, websiteData, reviewsData, quality, reasons });
     }
 
     if (scrapedBusinesses.length === 0) {
