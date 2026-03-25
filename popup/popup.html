@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SiteScout</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 380px;
+      min-height: 480px;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: #FAFAFA;
+      color: #0D0D0D;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    /* ── Header ── */
+    .header {
+      background: #0D0D0D;
+      color: white;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    .header .subtitle {
+      font-size: 11px;
+      color: #888;
+      font-weight: 400;
+    }
+
+    .header .settings-btn {
+      background: none;
+      border: none;
+      color: #888;
+      cursor: pointer;
+      font-size: 18px;
+      padding: 4px;
+    }
+
+    .header .settings-btn:hover { color: white; }
+
+    /* ── Views ── */
+    .view { display: none; }
+    .view.active { display: block; }
+
+    /* ── Scan View ── */
+    .scan-section {
+      padding: 20px;
+    }
+
+    .scan-btn {
+      width: 100%;
+      padding: 14px;
+      background: #0D0D0D;
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      letter-spacing: -0.2px;
+    }
+
+    .scan-btn:hover { background: #222; }
+    .scan-btn:disabled {
+      background: #CCC;
+      cursor: not-allowed;
+    }
+
+    .scan-btn.scanning {
+      background: #333;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .scan-btn.scanning::after {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+      animation: shimmer 1.5s infinite;
+    }
+
+    @keyframes shimmer {
+      100% { left: 100%; }
+    }
+
+    .scan-status {
+      margin-top: 12px;
+      padding: 10px 14px;
+      background: #F0F0F0;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #555;
+      display: none;
+    }
+
+    .scan-status.visible { display: block; }
+    .scan-status.error { background: #FEE; color: #C00; }
+    .scan-status.success { background: #EFE; color: #070; }
+
+    /* ── Results View ── */
+    .results-section {
+      padding: 16px 20px;
+    }
+
+    .business-card {
+      background: white;
+      border: 1px solid #E5E5E5;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+
+    .business-card .name {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 2px;
+    }
+
+    .business-card .category {
+      font-size: 11px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .business-card .meta {
+      font-size: 12px;
+      color: #555;
+    }
+
+    .business-card .meta span {
+      display: block;
+      margin-bottom: 2px;
+    }
+
+    /* ── Gap Analysis ── */
+    .gaps-section {
+      margin-top: 12px;
+    }
+
+    .gaps-section h3 {
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #888;
+      margin-bottom: 8px;
+    }
+
+    .gap-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 8px 12px;
+      background: white;
+      border: 1px solid #E5E5E5;
+      border-radius: 8px;
+      margin-bottom: 6px;
+    }
+
+    .gap-item .impact {
+      flex-shrink: 0;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-top: 5px;
+    }
+
+    .gap-item .impact.high { background: #E53E3E; }
+    .gap-item .impact.medium { background: #DD6B20; }
+    .gap-item .impact.low { background: #38A169; }
+
+    .gap-item .gap-text {
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .gap-item .gap-explain {
+      font-size: 11px;
+      color: #777;
+      margin-top: 2px;
+    }
+
+    /* ── Action buttons ── */
+    .actions {
+      padding: 0 20px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .action-btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .action-btn.primary {
+      background: #0D0D0D;
+      color: white;
+    }
+    .action-btn.primary:hover { background: #222; }
+
+    .action-btn.secondary {
+      background: white;
+      color: #0D0D0D;
+      border: 1px solid #E5E5E5;
+    }
+    .action-btn.secondary:hover { background: #F5F5F5; }
+
+    .action-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    /* ── Leads List ── */
+    .leads-section {
+      padding: 16px 20px;
+    }
+
+    .lead-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      background: white;
+      border: 1px solid #E5E5E5;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+
+    .lead-item:hover { border-color: #0D0D0D; }
+
+    .lead-item .lead-name {
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .lead-item .lead-status {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-weight: 600;
+    }
+
+    .lead-item .lead-status.analyzed { background: #EBF8FF; color: #2B6CB0; }
+    .lead-item .lead-status.built { background: #F0FFF4; color: #276749; }
+    .lead-item .lead-status.emailed { background: #FFFFF0; color: #975A16; }
+    .lead-item .lead-status.converted { background: #F0FFF4; color: #22543D; }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #E5E5E5;
+      background: white;
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: 10px;
+      background: none;
+      border: none;
+      font-size: 12px;
+      font-weight: 600;
+      color: #888;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+    }
+
+    .tab-btn.active {
+      color: #0D0D0D;
+      border-bottom-color: #0D0D0D;
+    }
+
+    .tab-btn:hover { color: #0D0D0D; }
+
+    /* ── Empty state ── */
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: #888;
+    }
+
+    .empty-state .icon { font-size: 32px; margin-bottom: 8px; }
+    .empty-state p { font-size: 12px; }
+
+    /* ── Lovable Prompt Preview ── */
+    .prompt-preview {
+      background: #F7F7F7;
+      border: 1px solid #E5E5E5;
+      border-radius: 8px;
+      padding: 12px;
+      margin-top: 12px;
+      max-height: 150px;
+      overflow-y: auto;
+      font-size: 11px;
+      color: #555;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    /* ── Scrollbar ── */
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #DDD; border-radius: 2px; }
+  </style>
+</head>
+<body>
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <h1>SiteScout</h1>
+      <div class="subtitle">by Create & Source</div>
+    </div>
+    <button class="settings-btn" id="settingsBtn" title="Settings">&#9881;</button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="scan">Scan</button>
+    <button class="tab-btn" data-tab="leads">Leads <span id="leadCount"></span></button>
+  </div>
+
+  <!-- Scan View -->
+  <div class="view active" id="scanView">
+    <div class="scan-section">
+      <button class="scan-btn" id="scanBtn">Scan This Page</button>
+      <div class="scan-status" id="scanStatus"></div>
+    </div>
+
+    <!-- Results (shown after scan) -->
+    <div id="resultsContainer" style="display: none;">
+      <div class="results-section">
+        <div class="business-card">
+          <div class="name" id="bizName">—</div>
+          <div class="category" id="bizCategory">—</div>
+          <div class="meta">
+            <span id="bizPhone"></span>
+            <span id="bizAddress"></span>
+            <span id="bizWebsite"></span>
+            <span id="bizRating"></span>
+          </div>
+        </div>
+
+        <div class="gaps-section" id="gapsSection" style="display: none;">
+          <h3>Revenue Gaps Found</h3>
+          <div id="gapsList"></div>
+        </div>
+
+        <div id="promptPreview" class="prompt-preview" style="display: none;"></div>
+      </div>
+
+      <div class="actions">
+        <button class="action-btn primary" id="analyzeBtn">Analyze & Find Gaps</button>
+        <button class="action-btn primary" id="buildBtn" style="display: none;">Build Site on Lovable</button>
+        <button class="action-btn secondary" id="saveLeadBtn">Save as Lead</button>
+        <button class="action-btn secondary" id="fullPipelineBtn">Full Pipeline (Scan → Build → Email)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Leads View -->
+  <div class="view" id="leadsView">
+    <div class="leads-section" id="leadsList">
+      <div class="empty-state">
+        <div class="icon">&#128269;</div>
+        <p>No leads yet. Scan a business page to get started.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
