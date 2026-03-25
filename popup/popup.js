@@ -25,6 +25,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const sendToCrmBtn = document.getElementById("sendToCrmBtn");
   const generatePromptsBtn = document.getElementById("generatePromptsBtn");
   const copyAllBtn = document.getElementById("copyAllBtn");
+  const clearAllBtn = document.getElementById("clearAllBtn");
 
   // ── Load saved location ──
   chrome.storage.sync.get(["lastLocation"], (r) => {
@@ -93,6 +94,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     if (changes.leads) {
       updateLeadCount();
+      // Re-render leads list if leads tab is active
+      const leadsTabActive = document.querySelector('.tab-btn[data-tab="leads"]')?.classList.contains("active");
+      if (leadsTabActive && !leadDetail.classList.contains("active")) {
+        loadLeads();
+      }
     }
   });
 
@@ -329,22 +335,17 @@ document.addEventListener("DOMContentLoaded", () => {
   // ── Generate missing prompts ──
   generatePromptsBtn.addEventListener("click", async () => {
     generatePromptsBtn.disabled = true;
-    generatePromptsBtn.textContent = "Generating...";
+    generatePromptsBtn.textContent = "Generating... (runs in background)";
     try {
       const result = await sendMessage({ type: "GENERATE_MISSING_PROMPTS" });
-      generatePromptsBtn.textContent = result?.message || "Done!";
-      setTimeout(() => {
-        generatePromptsBtn.textContent = "Generate Missing Prompts";
-        generatePromptsBtn.disabled = false;
-      }, 3000);
-      loadLeads();
+      generatePromptsBtn.textContent = result?.message || "Started!";
     } catch {
-      generatePromptsBtn.textContent = "Failed";
-      setTimeout(() => {
-        generatePromptsBtn.textContent = "Generate Missing Prompts";
-        generatePromptsBtn.disabled = false;
-      }, 3000);
+      generatePromptsBtn.textContent = "Failed — check Claude API key";
     }
+    setTimeout(() => {
+      generatePromptsBtn.disabled = false;
+      loadLeads();
+    }, 3000);
   });
 
   // ── Copy all leads as JSON ──
@@ -362,6 +363,14 @@ document.addEventListener("DOMContentLoaded", () => {
       copyAllBtn.textContent = "Copy All as JSON";
       copyAllBtn.classList.remove("success");
     }, 2000);
+  });
+
+  // ── Clear all leads ──
+  clearAllBtn.addEventListener("click", async () => {
+    if (!confirm("Delete all leads? This cannot be undone.")) return;
+    await sendMessage({ type: "CLEAR_ALL_LEADS" });
+    loadLeads();
+    updateLeadCount();
   });
 
   // ── Helpers ──

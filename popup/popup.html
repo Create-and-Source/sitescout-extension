@@ -562,6 +562,15 @@
       border-color: #38A169;
     }
 
+    .action-bar-btn.danger {
+      background: white;
+      color: #C00;
+      border: 1px solid #C00;
+      font-size: 11px;
+    }
+
+    .action-bar-btn.danger:hover { background: #FFF5F5; }
+
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -632,6 +641,7 @@
       <button class="action-bar-btn primary" id="sendToCrmBtn">Send to CRM</button>
       <button class="action-bar-btn secondary" id="generatePromptsBtn">Generate Missing Prompts</button>
       <button class="action-bar-btn secondary" id="copyAllBtn">Copy All as JSON</button>
+      <button class="action-bar-btn danger" id="clearAllBtn">Clear All</button>
     </div>
     <div class="leads-section" id="leadsList">
       <div class="empty-state">

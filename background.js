@@ -64,6 +64,10 @@ async function handleMessage(message) {
       generateMissingPrompts(); // runs async in background
       return { message: "Generating... check back in a minute" };
 
+    case "CLEAR_ALL_LEADS":
+      await chrome.storage.local.set({ leads: [], huntStatus: { running: false, feed: [], leadCount: 0, trends: [] } });
+      return { success: true };
+
     default:
       throw new Error(`Unknown message type: ${message.type}`);
   }
@@ -205,8 +209,18 @@ async function startFullHunt(location, specificIndustry) {
       let websiteData = null;
       let reviewsData = null;
 
-      // Quick checks BEFORE scraping — skip businesses that clearly have good sites
-      // Unclaimed listing or no website = instant lead candidate
+      // Quick checks BEFORE scraping — skip businesses that clearly don't need us
+      // High reviews + reservations/ordering already = skip
+      const svcOpts = biz.serviceOptions || {};
+      const hasReservations = svcOpts.dine_in || svcOpts.reservations;
+      const isEstablished = biz.rating >= 4.3 && biz.reviews > 200;
+
+      if (isEstablished && hasReservations && biz.website) {
+        await addFeedItem("skip", `${biz.name} — ${biz.rating}/5, ${biz.reviews} reviews, already established with reservations`);
+        continue;
+      }
+
+      // No website = instant lead candidate
       if (!biz.website) {
         await addFeedItem("found", `${biz.name} — NO website at all`);
         scrapedBusinesses.push({ biz, websiteData: null, reviewsData: null, noSite: true });
@@ -367,11 +381,12 @@ async function startFullHunt(location, specificIndustry) {
 
 // ── Quick site quality check WITHOUT Claude ──────────────────
 
-function quickSiteScore(websiteData) {
+function quickSiteScore(websiteData, bizInfo) {
   if (!websiteData || websiteData.error) return "none";
 
   let score = 0;
   const d = websiteData;
+  const pageText = JSON.stringify(d).toLowerCase();
 
   // Has basic structure
   if (d.structure?.navigation?.length > 3) score += 2;
@@ -397,6 +412,23 @@ function quickSiteScore(websiteData) {
 
   // Tech — modern frameworks = probably decent site
   if (d.structure?.tech?.some((t) => ["React", "Vue", "Angular", "Shopify"].includes(t))) score += 3;
+
+  // Online ordering / reservations / booking = already has key features
+  const hasBooking = pageText.includes("opentable") || pageText.includes("resy.com") ||
+    pageText.includes("yelp.com/reservations") || pageText.includes("book online") ||
+    pageText.includes("book now") || pageText.includes("book appointment") ||
+    pageText.includes("schedule online") || pageText.includes("online booking") ||
+    pageText.includes("reserve a table") || pageText.includes("make a reservation");
+  const hasOrdering = pageText.includes("doordash") || pageText.includes("grubhub") ||
+    pageText.includes("ubereats") || pageText.includes("order online") ||
+    pageText.includes("online ordering") || pageText.includes("toast.com") ||
+    pageText.includes("chownow") || pageText.includes("square online");
+  const hasEcommerce = pageText.includes("add to cart") || pageText.includes("shop now") ||
+    pageText.includes("checkout") || pageText.includes("shopify");
+
+  if (hasBooking) score += 4;
+  if (hasOrdering) score += 4;
+  if (hasEcommerce) score += 3;
 
   // Old builders = probably needs a redo
   if (d.structure?.tech?.some((t) => ["Wix", "Weebly", "GoDaddy"].includes(t))) score -= 2;
