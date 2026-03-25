@@ -258,47 +258,53 @@ async function startFullHunt(location, specificIndustry) {
       return;
     }
 
-    await addFeedItem("analyzing", `${scrapedBusinesses.length} weak/missing websites found. AI analyzing gaps...`);
+    // ── STEP 4: Save ALL leads immediately ──
+    await addFeedItem("done", `${scrapedBusinesses.length} weak/missing websites found. Saving leads...`);
 
-    // ── STEP 4: NOW Claude analyzes ONLY the weak ones ──
-    if (!config.claudeApiKey) {
-      // Save leads without AI analysis — still useful
-      for (const item of scrapedBusinesses) {
-        const lead = {
-          id: crypto.randomUUID(),
-          businessName: item.biz.name,
-          businessType: item.biz._industry,
-          currentSiteQuality: item.noSite ? "none" : (item.quality || "poor"),
-          contact: {
-            phone: item.biz.phone || "",
-            address: item.biz.address || "",
-            website: item.biz.website || "",
-          },
-          googleMapsData: {
-            rating: item.biz.rating,
-            reviews: item.biz.reviews,
-            placeId: item.biz.placeId,
-            thumbnail: item.biz.thumbnail,
-            unclaimed: item.biz.unclaimed,
-          },
-          scrapedData: item.websiteData,
-          industry: item.biz._industry,
-          location,
-          status: "scraped",
-          savedAt: new Date().toISOString(),
-        };
-        await saveLead(lead);
-        leadCount++;
-        await updateHuntStatus({ leadCount });
-        await addFeedItem("done", `${item.biz.name} — saved (add Claude key for gap analysis)`);
-      }
-    } else {
+    for (const item of scrapedBusinesses) {
+      const lead = {
+        id: crypto.randomUUID(),
+        businessName: item.biz.name,
+        businessType: item.biz._industry,
+        currentSiteQuality: item.noSite ? "none" : (item.quality || "poor"),
+        contact: {
+          phone: item.biz.phone || "",
+          address: item.biz.address || "",
+          website: item.biz.website || "",
+          email: item.websiteData?.contact?.email || "",
+        },
+        googleMapsData: {
+          rating: item.biz.rating,
+          reviews: item.biz.reviews,
+          placeId: item.biz.placeId,
+          thumbnail: item.biz.thumbnail,
+          unclaimed: item.biz.unclaimed,
+        },
+        reviewsData: item.reviewsData || null,
+        scrapedData: item.websiteData,
+        industry: item.biz._industry,
+        location,
+        status: "scraped",
+        savedAt: new Date().toISOString(),
+      };
+      await saveLead(lead);
+      leadCount++;
+      await updateHuntStatus({ leadCount });
+      await addFeedItem("done", `${item.biz.name} — saved`);
+    }
+
+    await addFeedItem("done", `${leadCount} leads saved! Use "Generate Missing Prompts" for AI analysis.`);
+
+    // ── STEP 5: AI analysis in background (optional, non-blocking) ──
+    if (config.claudeApiKey) {
+      await addFeedItem("analyzing", `Now generating AI analysis + Lovable prompts...`);
+
       for (let i = 0; i < scrapedBusinesses.length; i++) {
         if (huntState.stopped) break;
 
         const item = scrapedBusinesses[i];
-        const pct = 65 + ((i + 1) / scrapedBusinesses.length) * 30;
-        await updateHuntStatus({ status: `Analyzing ${item.biz.name}...`, progress: pct });
+        const pct = 70 + ((i + 1) / scrapedBusinesses.length) * 28;
+        await updateHuntStatus({ status: `AI analyzing ${item.biz.name}...`, progress: pct });
 
         try {
           const analysis = await analyzeBusinessForLeadGen(
@@ -310,63 +316,27 @@ async function startFullHunt(location, specificIndustry) {
             `Trend score: ${item.biz._trendScore}/100`
           );
 
-          if (analysis && analysis.currentSiteQuality !== "good" && analysis.gaps?.length > 0) {
-            const lead = {
-              id: crypto.randomUUID(),
-              ...analysis,
-              contact: {
-                phone: item.biz.phone || "",
-                address: item.biz.address || "",
-                website: item.biz.website || "",
-                email: item.websiteData?.contact?.email || "",
-              },
-              googleMapsData: {
-                rating: item.biz.rating,
-                reviews: item.biz.reviews,
-                placeId: item.biz.placeId,
-                thumbnail: item.biz.thumbnail,
-                unclaimed: item.biz.unclaimed,
-              },
-              reviewsData: item.reviewsData || null,
-              scrapedData: item.websiteData,
-              industry: item.biz._industry,
-              location,
-              status: "analyzed",
-              savedAt: new Date().toISOString(),
-            };
-
-            await saveLead(lead);
-            leadCount++;
-            await updateHuntStatus({ leadCount });
-            await addFeedItem("done", `${lead.businessName} — ${lead.gapSummary || lead.gaps?.[0]?.gap || "opportunity found"}`);
+          if (analysis && analysis.gaps?.length > 0) {
+            // Update existing lead with AI analysis
+            const leads = await getLeadsFromStorage();
+            const idx = leads.findIndex(l => l.businessName?.toLowerCase() === item.biz.name?.toLowerCase());
+            if (idx >= 0) {
+              leads[idx] = {
+                ...leads[idx],
+                ...analysis,
+                businessName: item.biz.name,
+                contact: leads[idx].contact,
+                googleMapsData: leads[idx].googleMapsData,
+                reviewsData: leads[idx].reviewsData,
+                scrapedData: leads[idx].scrapedData,
+                status: "analyzed",
+              };
+              await chrome.storage.local.set({ leads });
+              await addFeedItem("done", `${item.biz.name} — AI analysis complete`);
+            }
           }
-        } catch (err) {
-          // Claude failed for this one — save as scraped lead anyway
-          const lead = {
-            id: crypto.randomUUID(),
-            businessName: item.biz.name,
-            businessType: item.biz._industry,
-            currentSiteQuality: item.noSite ? "none" : (item.quality || "poor"),
-            contact: {
-              phone: item.biz.phone || "",
-              address: item.biz.address || "",
-              website: item.biz.website || "",
-            },
-            googleMapsData: {
-              rating: item.biz.rating,
-              reviews: item.biz.reviews,
-              placeId: item.biz.placeId,
-            },
-            scrapedData: item.websiteData,
-            industry: item.biz._industry,
-            location,
-            status: "scraped",
-            savedAt: new Date().toISOString(),
-          };
-          await saveLead(lead);
-          leadCount++;
-          await updateHuntStatus({ leadCount });
-          await addFeedItem("done", `${item.biz.name} — saved (AI analysis failed, will retry later)`);
+        } catch {
+          await addFeedItem("skip", `${item.biz.name} — AI failed, use "Generate Missing Prompts" later`);
         }
       }
     }
