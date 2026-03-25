@@ -342,7 +342,17 @@ async function startFullHunt(location, specificIndustry) {
     }
 
     await updateHuntStatus({ running: false, status: "Complete", progress: 100 });
-    await addFeedItem("done", `Hunt complete! ${leadCount} leads ready.`);
+    await addFeedItem("done", `Hunt complete! ${leadCount} leads ready. Sending to CRM...`);
+
+    // Auto-send to CRM when hunt finishes
+    try {
+      const result = await sendLeadsToCRM();
+      if (result?.success) {
+        await addFeedItem("done", `${result.count} leads sent to CRM!`);
+      }
+    } catch {
+      await addFeedItem("skip", `CRM sync failed — use "Send to CRM" button manually`);
+    }
   } catch (err) {
     await addFeedItem("skip", `Error: ${err.message}`);
     await updateHuntStatus({ running: false, status: "Error" });
@@ -1103,22 +1113,30 @@ async function sendLeadsToCRM() {
     await chrome.scripting.executeScript({
       target: { tabId: crmTab.id },
       func: (leadsJSON) => {
-        // Merge with existing CRM leads
+        // Merge with existing CRM leads — dedup by name, update existing with newer data
         let existing = [];
         try {
           existing = JSON.parse(localStorage.getItem("sitescout_leads") || "[]");
         } catch {}
 
         const newLeads = JSON.parse(leadsJSON);
-        const existingNames = new Set(existing.map(l => l.businessName?.toLowerCase()));
-        const unique = newLeads.filter(l => !existingNames.has(l.businessName?.toLowerCase()));
-        const merged = [...unique, ...existing];
+        const existingMap = new Map(existing.map(l => [l.businessName?.toLowerCase(), l]));
 
+        for (const lead of newLeads) {
+          const key = lead.businessName?.toLowerCase();
+          if (existingMap.has(key)) {
+            // Update existing lead with newer data (keeps CRM status changes)
+            const old = existingMap.get(key);
+            existingMap.set(key, { ...old, ...lead, status: old.status || lead.status });
+          } else {
+            existingMap.set(key, lead);
+          }
+        }
+
+        const merged = Array.from(existingMap.values());
         localStorage.setItem("sitescout_leads", JSON.stringify(merged));
 
-        // Trigger a storage event so React picks it up
         window.dispatchEvent(new Event("storage"));
-        // Also reload the page to ensure the new data shows
         window.location.reload();
       },
       args: [JSON.stringify(leads)],
