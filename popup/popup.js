@@ -1,6 +1,9 @@
 // ============================================================
-// SiteScout — Popup Script (Autonomous Hunting)
+// SiteScout — Popup Script
 // ============================================================
+// The popup just DISPLAYS hunt progress from background storage.
+// All hunting runs in the background worker — popup can close
+// and reopen without losing anything.
 
 document.addEventListener("DOMContentLoaded", () => {
   // ── Elements ──
@@ -18,8 +21,6 @@ document.addEventListener("DOMContentLoaded", () => {
   const leadCountEl = document.getElementById("leadCount");
   const leadsList = document.getElementById("leadsList");
   const leadDetail = document.getElementById("leadDetail");
-
-  let huntStopped = false;
 
   // ── Load saved location ──
   chrome.storage.sync.get(["lastLocation"], (r) => {
@@ -43,8 +44,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   settingsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
 
-  // ── Auto Hunt (AI picks the industries) ──
-  autoHuntBtn.addEventListener("click", async () => {
+  // ── Auto Hunt ──
+  autoHuntBtn.addEventListener("click", () => {
     const location = locationInput.value.trim();
     if (!location) {
       locationInput.style.borderColor = "#C00";
@@ -52,13 +53,12 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(() => (locationInput.style.borderColor = "#E5E5E5"), 2000);
       return;
     }
-
     chrome.storage.sync.set({ lastLocation: location });
-    startHunt(location, null);
+    sendMessage({ type: "START_HUNT", location });
   });
 
-  // ── Manual Industry Hunt ──
-  huntBtn.addEventListener("click", async () => {
+  // ── Industry Hunt ──
+  huntBtn.addEventListener("click", () => {
     const location = locationInput.value.trim();
     const industry = industryInput.value.trim();
     if (!location) {
@@ -73,162 +73,74 @@ document.addEventListener("DOMContentLoaded", () => {
       setTimeout(() => (industryInput.style.borderColor = "#E5E5E5"), 2000);
       return;
     }
-
     chrome.storage.sync.set({ lastLocation: location });
-    startHunt(location, industry);
+    sendMessage({ type: "START_HUNT", location, industry });
   });
 
   // ── Stop ──
   stopBtn.addEventListener("click", () => {
-    huntStopped = true;
-    stopBtn.classList.remove("visible");
-    addFeedItem("skip", "Hunt stopped by user");
+    sendMessage({ type: "STOP_HUNT" });
   });
 
-  // ── Start the hunt ──
-  async function startHunt(location, industry) {
-    huntStopped = false;
-    autoHuntBtn.disabled = true;
-    huntBtn.disabled = true;
-    progressSection.classList.add("visible");
-    stopBtn.classList.add("visible");
-    liveFeed.innerHTML = "";
-    trendingTags.style.display = "none";
-    trendingTags.innerHTML = "";
-    progressFill.style.width = "0%";
-    progressCounter.textContent = "0 leads found";
-
-    let leadCount = 0;
-
-    try {
-      if (!industry) {
-        // Step 1: AI finds trending industries for this location
-        addFeedItem("searching", `Researching what's hot in <strong>${esc(location)}</strong>...`);
-        progressFill.style.width = "5%";
-
-        const trends = await sendMessage({
-          type: "FIND_TRENDING_INDUSTRIES",
-          location,
-        });
-
-        if (trends.error) {
-          addFeedItem("skip", `Error: ${trends.error}`);
-          return;
-        }
-
-        // Show trending tags
-        trendingTags.style.display = "flex";
-        (trends.industries || []).forEach((ind) => {
-          const tag = document.createElement("span");
-          tag.className = `trend-tag${ind.hot ? " hot" : ""}`;
-          tag.textContent = ind.name;
-          trendingTags.appendChild(tag);
-        });
-
-        addFeedItem("found", `Found <strong>${trends.industries.length} trending industries</strong>`);
-        progressFill.style.width = "10%";
-
-        // Step 2: Hunt in each industry
-        const industries = trends.industries || [];
-        for (let i = 0; i < industries.length; i++) {
-          if (huntStopped) break;
-
-          const ind = industries[i];
-          const pct = 10 + ((i + 1) / industries.length) * 85;
-          progressFill.style.width = `${pct}%`;
-
-          addFeedItem("searching", `Searching for <strong>${esc(ind.name)}</strong> in ${esc(location)}...`);
-
-          const results = await sendMessage({
-            type: "HUNT_INDUSTRY",
-            location,
-            industry: ind.name,
-            reason: ind.reason,
-          });
-
-          if (huntStopped) break;
-          if (results.error) {
-            addFeedItem("skip", `${esc(ind.name)}: ${results.error}`);
-            continue;
-          }
-
-          const leads = results.leads || [];
-          for (const lead of leads) {
-            leadCount++;
-            progressCounter.textContent = `${leadCount} leads found`;
-            addFeedItem(
-              "done",
-              `<strong>${esc(lead.businessName)}</strong> — ${esc(lead.gapSummary || lead.gaps?.[0]?.gap || "needs a better site")}`
-            );
-          }
-
-          if (leads.length === 0) {
-            addFeedItem("skip", `${esc(ind.name)}: no weak websites found (all looking good)`);
-          }
-        }
-      } else {
-        // Direct industry hunt
-        addFeedItem("searching", `Searching for <strong>${esc(industry)}</strong> in <strong>${esc(location)}</strong>...`);
-        progressFill.style.width = "20%";
-
-        const results = await sendMessage({
-          type: "HUNT_INDUSTRY",
-          location,
-          industry,
-          reason: "User-specified industry",
-        });
-
-        progressFill.style.width = "80%";
-
-        if (results.error) {
-          addFeedItem("skip", `Error: ${results.error}`);
-          return;
-        }
-
-        const leads = results.leads || [];
-        for (const lead of leads) {
-          leadCount++;
-          progressCounter.textContent = `${leadCount} leads found`;
-          addFeedItem(
-            "done",
-            `<strong>${esc(lead.businessName)}</strong> — ${esc(lead.gapSummary || lead.gaps?.[0]?.gap || "needs a better site")}`
-          );
-        }
-
-        if (leads.length === 0) {
-          addFeedItem("skip", "No weak websites found in this industry here");
-        }
-      }
-
-      progressFill.style.width = "100%";
-      addFeedItem("done", `<strong>Hunt complete! ${leadCount} leads ready.</strong>`);
-      updateLeadCount();
-    } catch (err) {
-      addFeedItem("skip", `Error: ${err.message}`);
-    } finally {
-      autoHuntBtn.disabled = false;
-      huntBtn.disabled = false;
-      stopBtn.classList.remove("visible");
+  // ── Listen for storage changes (live updates from background) ──
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.huntStatus) {
+      renderHuntStatus(changes.huntStatus.newValue);
     }
-  }
+    if (changes.leads) {
+      updateLeadCount();
+    }
+  });
 
-  // ── Feed helper ──
-  function addFeedItem(type, html) {
-    const icons = {
-      searching: "&#128270;",
-      found: "&#9889;",
-      analyzing: "&#129504;",
-      done: "&#9989;",
-      skip: "&#9898;",
-    };
+  // ── Render hunt status from storage ──
+  function renderHuntStatus(status) {
+    if (!status) return;
 
-    const item = document.createElement("div");
-    item.className = "feed-item";
-    item.innerHTML = `
-      <div class="feed-icon ${type}">${icons[type] || "&#8226;"}</div>
-      <div class="feed-text">${html}</div>
-    `;
-    liveFeed.prepend(item);
+    if (status.running || status.feed?.length > 0) {
+      progressSection.classList.add("visible");
+    }
+
+    // Buttons
+    autoHuntBtn.disabled = status.running;
+    huntBtn.disabled = status.running;
+    stopBtn.classList.toggle("visible", status.running);
+
+    // Progress bar
+    progressFill.style.width = `${status.progress || 0}%`;
+    progressCounter.textContent = `${status.leadCount || 0} leads found`;
+
+    // Trending tags
+    if (status.trends && status.trends.length > 0) {
+      trendingTags.style.display = "flex";
+      trendingTags.innerHTML = status.trends
+        .map(
+          (ind) =>
+            `<span class="trend-tag${ind.hot ? " hot" : ""}">${esc(ind.name)}</span>`
+        )
+        .join("");
+    }
+
+    // Feed items
+    if (status.feed) {
+      const icons = {
+        searching: "&#128270;",
+        found: "&#9889;",
+        analyzing: "&#129504;",
+        done: "&#9989;",
+        skip: "&#9898;",
+      };
+
+      liveFeed.innerHTML = status.feed
+        .map(
+          (item) => `
+        <div class="feed-item">
+          <div class="feed-icon ${item.type}">${icons[item.type] || "&#8226;"}</div>
+          <div class="feed-text">${esc(item.text)}</div>
+        </div>
+      `
+        )
+        .join("");
+    }
   }
 
   // ── Leads ──
@@ -271,7 +183,6 @@ document.addEventListener("DOMContentLoaded", () => {
       )
       .join("");
 
-    // Click handler for lead detail
     container.querySelectorAll(".lead-card").forEach((card) => {
       card.addEventListener("click", () => {
         const idx = parseInt(card.dataset.index);
@@ -287,16 +198,12 @@ document.addEventListener("DOMContentLoaded", () => {
     leadDetail.innerHTML = `
       <button class="back-btn" id="backToLeads">&larr; Back to leads</button>
       <div class="detail-name">${esc(lead.businessName || "Unknown")}</div>
-      <div class="detail-category">${esc(lead.businessType || "")} &middot; ${esc(lead.contact?.address || lead.scrapedData?.contact?.address || "")}</div>
+      <div class="detail-category">${esc(lead.businessType || "")} &middot; ${esc(lead.contact?.address || "")}</div>
+
+      ${lead.gapSummary ? `<div class="detail-section"><h4>Opportunity</h4><p>${esc(lead.gapSummary)}</p></div>` : ""}
 
       ${
-        lead.gapSummary
-          ? `<div class="detail-section"><h4>Opportunity</h4><p>${esc(lead.gapSummary)}</p></div>`
-          : ""
-      }
-
-      ${
-        lead.gaps && lead.gaps.length
+        lead.gaps?.length
           ? `<div class="detail-section">
               <h4>Revenue Gaps</h4>
               ${lead.gaps
@@ -308,13 +215,14 @@ document.addEventListener("DOMContentLoaded", () => {
                     <div class="gap-text">${esc(g.gap)}</div>
                     <div class="gap-explain">${esc(g.explanation)}</div>
                   </div>
-                </div>
-              `
+                </div>`
                 )
                 .join("")}
             </div>`
           : ""
       }
+
+      ${lead.estimatedRevenueImpact ? `<div class="detail-section"><h4>Estimated Revenue Impact</h4><p>${esc(lead.estimatedRevenueImpact)}</p></div>` : ""}
 
       ${
         lead.lovablePrompt
@@ -325,10 +233,19 @@ document.addEventListener("DOMContentLoaded", () => {
           : ""
       }
 
+      ${
+        lead.emailBody
+          ? `<div class="detail-section">
+              <h4>Draft Email (needs your approval to send)</h4>
+              <div class="prompt-preview">${esc(lead.emailSubject ? `Subject: ${lead.emailSubject}\n\n` : "")}${esc(lead.emailBody)}</div>
+            </div>`
+          : ""
+      }
+
       <div class="detail-actions">
         ${lead.lovablePrompt ? '<button class="action-btn primary" id="copyPromptBtn">Copy Prompt & Open Lovable</button>' : ""}
-        ${lead.contact?.phone || lead.scrapedData?.contact?.phone ? `<button class="action-btn secondary" id="callLeadBtn">Call ${esc(lead.contact?.phone || lead.scrapedData?.contact?.phone)}</button>` : ""}
-        ${lead.contact?.email || lead.scrapedData?.contact?.email ? `<button class="action-btn secondary" id="emailLeadBtn">Email ${esc(lead.contact?.email || lead.scrapedData?.contact?.email)}</button>` : ""}
+        ${lead.contact?.phone ? `<button class="action-btn secondary" id="callLeadBtn">Call ${esc(lead.contact.phone)}</button>` : ""}
+        ${lead.contact?.website ? `<button class="action-btn secondary" id="visitSiteBtn">Visit Current Site</button>` : ""}
       </div>
     `;
 
@@ -344,6 +261,15 @@ document.addEventListener("DOMContentLoaded", () => {
         await navigator.clipboard.writeText(lead.lovablePrompt);
         copyBtn.textContent = "Copied!";
         chrome.tabs.create({ url: "https://lovable.dev/projects" });
+      });
+    }
+
+    const visitBtn = leadDetail.querySelector("#visitSiteBtn");
+    if (visitBtn) {
+      visitBtn.addEventListener("click", () => {
+        let url = lead.contact.website;
+        if (!url.startsWith("http")) url = "https://" + url;
+        chrome.tabs.create({ url });
       });
     }
   }
@@ -374,6 +300,16 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   }
 
-  // ── Init ──
-  updateLeadCount();
+  // ── Init: load current state ──
+  async function init() {
+    updateLeadCount();
+
+    // Check if a hunt is already running or has results
+    const status = await sendMessage({ type: "GET_HUNT_STATUS" });
+    if (status && (status.running || status.feed?.length > 0)) {
+      renderHuntStatus(status);
+    }
+  }
+
+  init();
 });

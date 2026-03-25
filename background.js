@@ -35,15 +35,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleMessage(message) {
   switch (message.type) {
-    case "FIND_TRENDING_INDUSTRIES":
-      return findTrendingIndustries(message.location);
+    case "START_HUNT":
+      // Kick off the hunt in the background — returns immediately
+      startFullHunt(message.location, message.industry || null);
+      return { started: true };
 
-    case "HUNT_INDUSTRY":
-      return huntIndustry(
-        message.location,
-        message.industry,
-        message.reason
-      );
+    case "STOP_HUNT":
+      huntState.stopped = true;
+      await updateHuntStatus({ running: false, status: "Stopped" });
+      return { stopped: true };
+
+    case "GET_HUNT_STATUS":
+      return getHuntStatus();
 
     case "GET_LEADS":
       return getLeadsFromStorage();
@@ -56,6 +59,115 @@ async function handleMessage(message) {
 
     default:
       throw new Error(`Unknown message type: ${message.type}`);
+  }
+}
+
+// ═════════════════════════════════════════════════════════════
+// Hunt state — persisted to storage so popup can read it
+// ═════════════════════════════════════════════════════════════
+
+const huntState = { stopped: false };
+
+async function getHuntStatus() {
+  const result = await chrome.storage.local.get(["huntStatus"]);
+  return result.huntStatus || { running: false, feed: [], leadCount: 0, trends: [] };
+}
+
+async function updateHuntStatus(updates) {
+  const current = await getHuntStatus();
+  const updated = { ...current, ...updates };
+  await chrome.storage.local.set({ huntStatus: updated });
+}
+
+async function addFeedItem(type, text) {
+  const current = await getHuntStatus();
+  const feed = current.feed || [];
+  feed.unshift({ type, text, time: Date.now() });
+  // Keep last 50 items
+  if (feed.length > 50) feed.length = 50;
+  await updateHuntStatus({ feed });
+}
+
+// ═════════════════════════════════════════════════════════════
+// FULL HUNT — runs entirely in the background
+// ═════════════════════════════════════════════════════════════
+
+async function startFullHunt(location, specificIndustry) {
+  huntState.stopped = false;
+
+  await updateHuntStatus({
+    running: true,
+    location,
+    status: "Starting hunt...",
+    feed: [],
+    leadCount: 0,
+    trends: [],
+    progress: 0,
+  });
+
+  const config = await getConfig();
+  if (!config.claudeApiKey) {
+    await addFeedItem("skip", "Error: Add your Claude API key in Settings first");
+    await updateHuntStatus({ running: false, status: "Error" });
+    return;
+  }
+
+  let leadCount = 0;
+
+  try {
+    let industries;
+
+    if (specificIndustry) {
+      // User specified an industry — just hunt that one
+      industries = [{ name: specificIndustry, searchQuery: `${specificIndustry} in ${location}`, hot: true, reason: "User-specified industry" }];
+      await addFeedItem("searching", `Searching for ${specificIndustry} in ${location}...`);
+    } else {
+      // STEP 1: Find trending industries
+      await addFeedItem("searching", `Researching what's hot in ${location}...`);
+      await updateHuntStatus({ status: "Researching trends...", progress: 5 });
+
+      const trends = await findTrendingIndustries(location);
+      industries = trends.industries || [];
+
+      await updateHuntStatus({ trends: industries, progress: 10 });
+      await addFeedItem("found", `Found ${industries.length} trending industries`);
+    }
+
+    // STEP 2: Hunt each industry
+    for (let i = 0; i < industries.length; i++) {
+      if (huntState.stopped) break;
+
+      const ind = industries[i];
+      const pct = specificIndustry ? 20 : 10 + ((i + 1) / industries.length) * 85;
+
+      await updateHuntStatus({ status: `Hunting ${ind.name}...`, progress: pct });
+      await addFeedItem("searching", `Searching for ${ind.name} in ${location}...`);
+
+      try {
+        const results = await huntIndustry(location, ind.name, ind.reason);
+
+        if (huntState.stopped) break;
+
+        const newLeads = results.leads || [];
+        for (const lead of newLeads) {
+          leadCount++;
+          await updateHuntStatus({ leadCount });
+          await addFeedItem("done", `${lead.businessName} — ${lead.gapSummary || lead.gaps?.[0]?.gap || "needs a better site"}`);
+        }
+
+        if (newLeads.length === 0) {
+          await addFeedItem("skip", `${ind.name}: no weak websites found`);
+        }
+      } catch (err) {
+        await addFeedItem("skip", `${ind.name}: ${err.message}`);
+      }
+    }
+
+    await updateHuntStatus({ running: false, status: "Complete", progress: 100 });
+    await addFeedItem("done", `Hunt complete! ${leadCount} leads ready.`);
+  } catch (err) {
+    await addFeedItem("skip", `Error: ${err.message}`);
+    await updateHuntStatus({ running: false, status: "Error" });
   }
 }
 
