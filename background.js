@@ -1073,78 +1073,117 @@ async function callClaude(apiKey, prompt, retries = 3) {
 // Send leads to CRM (opens CRM tab + injects into localStorage)
 // ═════════════════════════════════════════════════════════════
 
+const SUPABASE_URL = "https://zccqoxomaowljrwjrjip.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpjY3FveG9tYW93bGpyd2pyamlwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ0NTczMDUsImV4cCI6MjA5MDAzMzMwNX0.A9KycA0fg38PcmsYJGEVGbzeYv_Z9rKdD_r8Hnm85wA";
+
+function toSupabaseRow(lead) {
+  return {
+    business_name: lead.businessName || "",
+    business_type: lead.businessType || lead.industry || "",
+    industry: lead.industry || "",
+    location: lead.location || "",
+    status: lead.status || "scraped",
+    current_site_quality: lead.currentSiteQuality || "",
+    contact: lead.contact || {},
+    google_maps_data: lead.googleMapsData || {},
+    reviews_data: lead.reviewsData || null,
+    scraped_data: lead.scrapedData || null,
+    gaps: lead.gaps || [],
+    gap_summary: lead.gapSummary || "",
+    estimated_revenue_impact: lead.estimatedRevenueImpact || "",
+    recommended_features: lead.recommendedFeatures || [],
+    lovable_prompt: lead.lovablePrompt || "",
+    email_subject: lead.emailSubject || "",
+    email_body: lead.emailBody || "",
+  };
+}
+
 async function sendLeadsToCRM() {
   const leads = await getLeadsFromStorage();
   if (!leads || leads.length === 0) {
     return { error: "No leads to send" };
   }
 
-  const config = await getConfig();
-  const crmUrl = config.crmApiUrl || CRM_API_URL;
-
-  // Find existing CRM tab or open new one
-  const tabs = await chrome.tabs.query({});
-  let crmTab = tabs.find(t => t.url && (t.url.includes("sitescout-crm") || t.url.includes("localhost:5173")));
-
-  if (!crmTab) {
-    crmTab = await chrome.tabs.create({ url: crmUrl, active: true });
-    // Wait for tab to load
-    await new Promise(resolve => {
-      const onComplete = (tabId, changeInfo) => {
-        if (tabId === crmTab.id && changeInfo.status === "complete") {
-          chrome.tabs.onUpdated.removeListener(onComplete);
-          resolve();
-        }
-      };
-      chrome.tabs.onUpdated.addListener(onComplete);
-      // Timeout after 10s
-      setTimeout(() => {
-        chrome.tabs.onUpdated.removeListener(onComplete);
-        resolve();
-      }, 10000);
-    });
-  } else {
-    // Focus existing tab
-    await chrome.tabs.update(crmTab.id, { active: true });
-  }
-
-  // Inject leads into the CRM page's localStorage
   try {
-    await chrome.scripting.executeScript({
-      target: { tabId: crmTab.id },
-      func: (leadsJSON) => {
-        // Merge with existing CRM leads — dedup by name, update existing with newer data
-        let existing = [];
-        try {
-          existing = JSON.parse(localStorage.getItem("sitescout_leads") || "[]");
-        } catch {}
+    // Get existing leads from Supabase
+    const existingRes = await fetch(
+      `${SUPABASE_URL}/rest/v1/leads?select=business_name`,
+      {
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+        },
+      }
+    );
+    const existing = existingRes.ok ? await existingRes.json() : [];
+    const existingNames = new Set(existing.map(l => l.business_name?.toLowerCase()));
 
-        const newLeads = JSON.parse(leadsJSON);
-        const existingMap = new Map(existing.map(l => [l.businessName?.toLowerCase(), l]));
+    // Split into new vs updates
+    const newLeads = [];
+    const updateLeads = [];
 
-        for (const lead of newLeads) {
-          const key = lead.businessName?.toLowerCase();
-          if (existingMap.has(key)) {
-            // Update existing lead with newer data (keeps CRM status changes)
-            const old = existingMap.get(key);
-            existingMap.set(key, { ...old, ...lead, status: old.status || lead.status });
-          } else {
-            existingMap.set(key, lead);
+    for (const lead of leads) {
+      const name = (lead.businessName || "").toLowerCase();
+      if (!name) continue;
+
+      if (existingNames.has(name)) {
+        updateLeads.push(lead);
+      } else {
+        newLeads.push(lead);
+      }
+    }
+
+    // Insert new leads
+    if (newLeads.length > 0) {
+      await fetch(`${SUPABASE_URL}/rest/v1/leads`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          "Content-Type": "application/json",
+          Prefer: "return=minimal",
+        },
+        body: JSON.stringify(newLeads.map(toSupabaseRow)),
+      });
+    }
+
+    // Update existing leads with newer data (only if we have analysis)
+    for (const lead of updateLeads) {
+      const row = toSupabaseRow(lead);
+      if (row.lovable_prompt || row.gap_summary || row.gaps?.length > 0) {
+        await fetch(
+          `${SUPABASE_URL}/rest/v1/leads?business_name=ilike.${encodeURIComponent(lead.businessName)}`,
+          {
+            method: "PATCH",
+            headers: {
+              apikey: SUPABASE_ANON_KEY,
+              Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+              "Content-Type": "application/json",
+              Prefer: "return=minimal",
+            },
+            body: JSON.stringify(row),
           }
-        }
+        );
+      }
+    }
 
-        const merged = Array.from(existingMap.values());
-        localStorage.setItem("sitescout_leads", JSON.stringify(merged));
+    // Also open CRM tab
+    const config = await getConfig();
+    const crmUrl = config.crmApiUrl || CRM_API_URL;
+    const tabs = await chrome.tabs.query({});
+    let crmTab = tabs.find(t => t.url && (t.url.includes("sitescout-crm") || t.url.includes("localhost:5173")));
 
-        window.dispatchEvent(new Event("storage"));
-        window.location.reload();
-      },
-      args: [JSON.stringify(leads)],
-    });
+    if (!crmTab) {
+      await chrome.tabs.create({ url: crmUrl, active: true });
+    } else {
+      await chrome.tabs.update(crmTab.id, { active: true });
+      // Reload to show new data
+      await chrome.tabs.reload(crmTab.id);
+    }
 
     return { success: true, count: leads.length };
   } catch (err) {
-    return { error: `Failed to inject: ${err.message}` };
+    return { error: `Supabase sync failed: ${err.message}` };
   }
 }
 
