@@ -748,29 +748,38 @@ Return ONLY a JSON object:
 // Claude API helper
 // ═════════════════════════════════════════════════════════════
 
-async function callClaude(apiKey, prompt) {
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-      "anthropic-dangerous-direct-browser-access": "true",
-    },
-    body: JSON.stringify({
-      model: "claude-sonnet-4-20250514",
-      max_tokens: 4096,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
+async function callClaude(apiKey, prompt, retries = 3) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+        "anthropic-dangerous-direct-browser-access": "true",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
 
-  if (!res.ok) {
+    if (res.ok) {
+      const data = await res.json();
+      return data.content[0].text;
+    }
+
+    // Retry on overloaded (529) or rate limit (429) or server errors (500+)
+    if ((res.status === 529 || res.status === 429 || res.status >= 500) && attempt < retries) {
+      const wait = attempt * 3000; // 3s, 6s, 9s
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
+    }
+
     const errText = await res.text().catch(() => "Unknown error");
     throw new Error(`Claude API error ${res.status}: ${errText}`);
   }
-
-  const data = await res.json();
-  return data.content[0].text;
 }
 
 // ═════════════════════════════════════════════════════════════
