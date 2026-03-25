@@ -21,6 +21,10 @@ document.addEventListener("DOMContentLoaded", () => {
   const leadCountEl = document.getElementById("leadCount");
   const leadsList = document.getElementById("leadsList");
   const leadDetail = document.getElementById("leadDetail");
+  const leadsActions = document.getElementById("leadsActions");
+  const sendToCrmBtn = document.getElementById("sendToCrmBtn");
+  const generatePromptsBtn = document.getElementById("generatePromptsBtn");
+  const copyAllBtn = document.getElementById("copyAllBtn");
 
   // ── Load saved location ──
   chrome.storage.sync.get(["lastLocation"], (r) => {
@@ -149,6 +153,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const container = leadsList;
 
     if (!leads || leads.length === 0) {
+      leadsActions.style.display = "none";
       container.innerHTML = `
         <div class="empty-state">
           <p>No leads yet.</p>
@@ -156,6 +161,17 @@ document.addEventListener("DOMContentLoaded", () => {
         </div>
       `;
       return;
+    }
+
+    leadsActions.style.display = "flex";
+
+    // Show how many need prompts
+    const needPrompts = leads.filter(l => !l.lovablePrompt).length;
+    if (needPrompts > 0) {
+      generatePromptsBtn.textContent = `Generate ${needPrompts} Missing Prompts`;
+      generatePromptsBtn.style.display = "";
+    } else {
+      generatePromptsBtn.style.display = "none";
     }
 
     container.innerHTML = leads
@@ -279,6 +295,74 @@ document.addEventListener("DOMContentLoaded", () => {
     const count = leads?.length || 0;
     leadCountEl.textContent = count > 0 ? `(${count})` : "";
   }
+
+  // ── Send to CRM ──
+  sendToCrmBtn.addEventListener("click", async () => {
+    sendToCrmBtn.disabled = true;
+    sendToCrmBtn.textContent = "Sending...";
+    try {
+      const result = await sendMessage({ type: "SEND_TO_CRM" });
+      if (result?.success) {
+        sendToCrmBtn.textContent = "Sent!";
+        sendToCrmBtn.classList.add("success");
+        setTimeout(() => {
+          sendToCrmBtn.textContent = "Send to CRM";
+          sendToCrmBtn.classList.remove("success");
+          sendToCrmBtn.disabled = false;
+        }, 3000);
+      } else {
+        sendToCrmBtn.textContent = result?.error || "Failed";
+        setTimeout(() => {
+          sendToCrmBtn.textContent = "Send to CRM";
+          sendToCrmBtn.disabled = false;
+        }, 3000);
+      }
+    } catch (err) {
+      sendToCrmBtn.textContent = "Error";
+      setTimeout(() => {
+        sendToCrmBtn.textContent = "Send to CRM";
+        sendToCrmBtn.disabled = false;
+      }, 3000);
+    }
+  });
+
+  // ── Generate missing prompts ──
+  generatePromptsBtn.addEventListener("click", async () => {
+    generatePromptsBtn.disabled = true;
+    generatePromptsBtn.textContent = "Generating...";
+    try {
+      const result = await sendMessage({ type: "GENERATE_MISSING_PROMPTS" });
+      generatePromptsBtn.textContent = result?.message || "Done!";
+      setTimeout(() => {
+        generatePromptsBtn.textContent = "Generate Missing Prompts";
+        generatePromptsBtn.disabled = false;
+      }, 3000);
+      loadLeads();
+    } catch {
+      generatePromptsBtn.textContent = "Failed";
+      setTimeout(() => {
+        generatePromptsBtn.textContent = "Generate Missing Prompts";
+        generatePromptsBtn.disabled = false;
+      }, 3000);
+    }
+  });
+
+  // ── Copy all leads as JSON ──
+  copyAllBtn.addEventListener("click", async () => {
+    const leads = await sendMessage({ type: "GET_LEADS" });
+    if (!leads || leads.length === 0) {
+      copyAllBtn.textContent = "No leads";
+      setTimeout(() => (copyAllBtn.textContent = "Copy All as JSON"), 2000);
+      return;
+    }
+    await navigator.clipboard.writeText(JSON.stringify(leads, null, 2));
+    copyAllBtn.textContent = "Copied!";
+    copyAllBtn.classList.add("success");
+    setTimeout(() => {
+      copyAllBtn.textContent = "Copy All as JSON";
+      copyAllBtn.classList.remove("success");
+    }, 2000);
+  });
 
   // ── Helpers ──
   function esc(str) {

@@ -518,6 +518,50 @@
 
     .stop-btn.visible { display: block; }
 
+    /* ── Leads action bar ── */
+    .leads-actions {
+      display: flex;
+      gap: 6px;
+      padding: 12px 20px 0;
+      flex-wrap: wrap;
+    }
+
+    .action-bar-btn {
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+    }
+
+    .action-bar-btn.primary {
+      background: #0D0D0D;
+      color: white;
+    }
+
+    .action-bar-btn.primary:hover { background: #222; }
+
+    .action-bar-btn.secondary {
+      background: white;
+      color: #0D0D0D;
+      border: 1px solid #E5E5E5;
+    }
+
+    .action-bar-btn.secondary:hover { background: #F5F5F5; }
+
+    .action-bar-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .action-bar-btn.success {
+      background: #38A169;
+      color: white;
+      border-color: #38A169;
+    }
+
     /* ── Scrollbar ── */
     ::-webkit-scrollbar { width: 4px; }
     ::-webkit-scrollbar-track { background: transparent; }
@@ -584,6 +628,11 @@
 
   <!-- Leads View -->
   <div class="view" id="leadsView">
+    <div class="leads-actions" id="leadsActions" style="display:none;">
+      <button class="action-bar-btn primary" id="sendToCrmBtn">Send to CRM</button>
+      <button class="action-bar-btn secondary" id="generatePromptsBtn">Generate Missing Prompts</button>
+      <button class="action-bar-btn secondary" id="copyAllBtn">Copy All as JSON</button>
+    </div>
     <div class="leads-section" id="leadsList">
       <div class="empty-state">
         <p>No leads yet.</p>

@@ -57,6 +57,13 @@ async function handleMessage(message) {
     case "GET_CONFIG":
       return getConfig();
 
+    case "SEND_TO_CRM":
+      return sendLeadsToCRM();
+
+    case "GENERATE_MISSING_PROMPTS":
+      generateMissingPrompts(); // runs async in background
+      return { message: "Generating... check back in a minute" };
+
     default:
       throw new Error(`Unknown message type: ${message.type}`);
   }
@@ -1048,6 +1055,152 @@ async function callClaude(apiKey, prompt, retries = 3) {
     const errText = await res.text().catch(() => "Unknown error");
     throw new Error(`Claude API error ${res.status}: ${errText}`);
   }
+}
+
+// ═════════════════════════════════════════════════════════════
+// Send leads to CRM (opens CRM tab + injects into localStorage)
+// ═════════════════════════════════════════════════════════════
+
+async function sendLeadsToCRM() {
+  const leads = await getLeadsFromStorage();
+  if (!leads || leads.length === 0) {
+    return { error: "No leads to send" };
+  }
+
+  const config = await getConfig();
+  const crmUrl = config.crmApiUrl || CRM_API_URL;
+
+  // Find existing CRM tab or open new one
+  const tabs = await chrome.tabs.query({});
+  let crmTab = tabs.find(t => t.url && (t.url.includes("sitescout-crm") || t.url.includes("localhost:5173")));
+
+  if (!crmTab) {
+    crmTab = await chrome.tabs.create({ url: crmUrl, active: true });
+    // Wait for tab to load
+    await new Promise(resolve => {
+      const onComplete = (tabId, changeInfo) => {
+        if (tabId === crmTab.id && changeInfo.status === "complete") {
+          chrome.tabs.onUpdated.removeListener(onComplete);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(onComplete);
+      // Timeout after 10s
+      setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(onComplete);
+        resolve();
+      }, 10000);
+    });
+  } else {
+    // Focus existing tab
+    await chrome.tabs.update(crmTab.id, { active: true });
+  }
+
+  // Inject leads into the CRM page's localStorage
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: crmTab.id },
+      func: (leadsJSON) => {
+        // Merge with existing CRM leads
+        let existing = [];
+        try {
+          existing = JSON.parse(localStorage.getItem("sitescout_leads") || "[]");
+        } catch {}
+
+        const newLeads = JSON.parse(leadsJSON);
+        const existingNames = new Set(existing.map(l => l.businessName?.toLowerCase()));
+        const unique = newLeads.filter(l => !existingNames.has(l.businessName?.toLowerCase()));
+        const merged = [...unique, ...existing];
+
+        localStorage.setItem("sitescout_leads", JSON.stringify(merged));
+
+        // Trigger a storage event so React picks it up
+        window.dispatchEvent(new Event("storage"));
+        // Also reload the page to ensure the new data shows
+        window.location.reload();
+      },
+      args: [JSON.stringify(leads)],
+    });
+
+    return { success: true, count: leads.length };
+  } catch (err) {
+    return { error: `Failed to inject: ${err.message}` };
+  }
+}
+
+// ═════════════════════════════════════════════════════════════
+// Generate missing Lovable prompts (re-analyze scraped leads)
+// ═════════════════════════════════════════════════════════════
+
+async function generateMissingPrompts() {
+  const config = await getConfig();
+  if (!config.claudeApiKey) {
+    return { error: "Add Claude API key in Settings" };
+  }
+
+  const leads = await getLeadsFromStorage();
+  const needsAnalysis = leads.filter(l => !l.lovablePrompt);
+
+  if (needsAnalysis.length === 0) {
+    return { message: "All leads already have prompts" };
+  }
+
+  let generated = 0;
+
+  for (const lead of needsAnalysis) {
+    try {
+      const bizInfo = {
+        name: lead.businessName,
+        type: lead.businessType || lead.industry || "",
+        types: [],
+        address: lead.contact?.address || "",
+        phone: lead.contact?.phone || "",
+        website: lead.contact?.website || "",
+        rating: lead.googleMapsData?.rating || 0,
+        reviews: lead.googleMapsData?.reviews || 0,
+        unclaimed: lead.googleMapsData?.unclaimed || false,
+        serviceOptions: {},
+        hours: {},
+        description: "",
+        price: "",
+        openState: "",
+      };
+
+      const analysis = await analyzeBusinessForLeadGen(
+        config.claudeApiKey,
+        bizInfo,
+        lead.scrapedData || null,
+        lead.reviewsData || null,
+        lead.industry || lead.businessType || "local business",
+        "Re-analysis for prompt generation"
+      );
+
+      if (analysis) {
+        // Update the lead with the new analysis
+        const updatedLeads = await getLeadsFromStorage();
+        const idx = updatedLeads.findIndex(l => l.id === lead.id);
+        if (idx >= 0) {
+          updatedLeads[idx] = {
+            ...updatedLeads[idx],
+            ...analysis,
+            status: "analyzed",
+            businessName: lead.businessName, // Keep original name
+            contact: lead.contact, // Keep original contact
+            googleMapsData: lead.googleMapsData, // Keep original GMaps data
+          };
+          await chrome.storage.local.set({ leads: updatedLeads });
+          generated++;
+        }
+      }
+    } catch {
+      // Skip this lead, try next
+    }
+
+    // Small delay between API calls
+    await new Promise(r => setTimeout(r, 1000));
+  }
+
+  return { message: `Generated prompts for ${generated}/${needsAnalysis.length} leads` };
 }
 
 // ═════════════════════════════════════════════════════════════
